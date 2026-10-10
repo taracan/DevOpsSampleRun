@@ -11,8 +11,12 @@ React (frontend) → FastAPI (backend) → PostgreSQL (database)
 ## Project structure
 ```
 SmallProject/
-├── docker-compose.yml          # PostgreSQL container (host port 5433)
+├── docker-compose.yml          # PostgreSQL (host port 5433) + backend (port 8000); jobs on demand
+├── jobs/
+│   ├── Dockerfile              # nightly report image (reuses backend code)
+│   └── nightly_report.py
 ├── backend/
+│   ├── Dockerfile
 │   ├── requirements.txt
 │   ├── .env.example
 │   ├── tests/
@@ -40,20 +44,26 @@ SmallProject/
 
 ## Run it
 
-**1. Database** (Docker, or a local `brew install postgresql@16`)
+**1. Database + backend** (Docker)
 ```bash
-docker compose up -d
+docker compose up -d --build
+```
+API: http://localhost:8000 · Docs: http://localhost:8000/docs · Health: http://localhost:8000/health
+
+Run the nightly report job on demand:
+```bash
+docker compose run --rm jobs
 ```
 
-**2. Backend**
+**2. Backend without Docker** (optional, for `--reload` while coding)
 ```bash
+docker compose up -d postgres
 cd backend
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
 uvicorn app.main:app --reload
 ```
-API: http://localhost:8000 · Docs: http://localhost:8000/docs
 
 **3. Frontend**
 ```bash

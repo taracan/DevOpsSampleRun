@@ -10,6 +10,43 @@ services:
       - "5433:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  backend:
+    build: ./backend
+    container_name: smallproject-backend
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      DB_NAME: smallproject
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # Not started by `docker compose up`; run on demand with:
+  #   docker compose run --rm jobs
+  jobs:
+    build:
+      context: .
+      dockerfile: jobs/Dockerfile
+    profiles: ["jobs"]
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      DB_NAME: smallproject
+    depends_on:
+      backend:
+        condition: service_started
 
 volumes:
   pgdata:
