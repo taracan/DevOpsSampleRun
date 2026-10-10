@@ -1,0 +1,7 @@
+# Build context is the repo root; only send what the job image needs.
+*
+!backend/requirements.txt
+!backend/app/
+!jobs/nightly_report.py
+**/__pycache__
+**/*.pyc
