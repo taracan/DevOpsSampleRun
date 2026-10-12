@@ -1,0 +1,125 @@
+# deploy.yml: CI/CD with GitHub Actions. Checks every pull request and
+# deploys every merge to main.
+#
+# What GitHub Actions is: GitHub runs these jobs on its own machines
+# ("runners") when something happens in the repo. Here:
+#
+#   Pull request to main --> job "build"   (checks only, no AWS access)
+#   Push/merge to main   --> job "build", then job "deploy"
+#
+# build:   builds the backend Docker image and the React app, to prove
+#          both still build. Branch protection requires this check to
+#          pass before a PR can be merged.
+# deploy:  1. signs in to AWS through OIDC: GitHub hands the job a
+#             short-lived token and AWS trusts it only for main of this
+#             repo (role smallproject-github-actions, infra/iam.tf). No
+#             AWS keys are stored in GitHub.
+#          2. builds the backend image and pushes it to ECR as :latest
+#             (plus the commit SHA, so each version is traceable)
+#          3. restarts the ECS service on the new image and waits until
+#             it is stable (a failed rollout rolls back automatically)
+#          4. builds the React app and uploads it to the S3 web bucket
+#          5. clears the CloudFront cache so visitors get the new files
+#          6. smoke test: calls /api/v1/health through CloudFront
+#
+# Infrastructure changes are NOT deployed here: Terraform is applied
+# from a laptop. The values below come from `terraform -chdir=infra output`.
+#
+# Runners are ARM (ubuntu-24.04-arm), to match the Fargate ARM64 tasks.
+
+name: deploy
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+# Never run two deploys at once; a newer push waits for the current one.
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: us-east-1
+  AWS_ROLE_ARN: arn:aws:iam::631571737116:role/smallproject-github-actions
+  ECR_REPOSITORY: 631571737116.dkr.ecr.us-east-1.amazonaws.com/smallproject-backend
+  ECS_CLUSTER: smallproject
+  ECS_SERVICE: smallproject-backend
+  WEB_BUCKET: smallproject-web-631571737116
+  CLOUDFRONT_DISTRIBUTION_ID: EWAOVPOVCP7SH
+  SITE_URL: https://d3u96oxec6f0pb.cloudfront.net
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build backend image
+        run: docker build -t backend:check backend
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Build frontend
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+
+  deploy:
+    needs: build
+    if: github.event_name == 'push'
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: read
+      id-token: write # lets the job request the OIDC token for AWS
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Sign in to AWS (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Sign in to ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push backend image
+        run: |
+          docker build -t "$ECR_REPOSITORY:latest" -t "$ECR_REPOSITORY:${{ github.sha }}" backend
+          docker push --all-tags "$ECR_REPOSITORY"
+
+      - name: Deploy to ECS and wait until stable
+        run: |
+          aws ecs update-service --cluster "$ECS_CLUSTER" --service "$ECS_SERVICE" --force-new-deployment > /dev/null
+          aws ecs wait services-stable --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Build and upload frontend
+        working-directory: frontend
+        env:
+          VITE_API_BASE_URL: /api/v1 # same address as the page, via CloudFront
+        run: |
+          npm ci
+          npm run build
+          aws s3 sync dist "s3://$WEB_BUCKET" --delete
+
+      - name: Clear CloudFront cache
+        run: aws cloudfront create-invalidation --distribution-id "$CLOUDFRONT_DISTRIBUTION_ID" --paths "/*" > /dev/null
+
+      - name: Smoke test
+        run: curl -fsS "$SITE_URL/api/v1/health" | grep -q '"status":"ok"'
