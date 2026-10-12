@@ -12,10 +12,3 @@ dist/
 .DS_Store
 .vscode/
 .idea/
-
-# Terraform
-.terraform/
-*.tfstate
-*.tfstate.*
-*.tfplan
-crash.log
