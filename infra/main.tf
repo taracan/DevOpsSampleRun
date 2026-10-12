@@ -68,4 +68,20 @@ locals {
 
   app_port = 8000 # port the backend container listens on
   db_port  = 5432 # PostgreSQL
+
+  account = data.aws_caller_identity.current.account_id
+
+  # Names of resources created in later steps. They are fixed here so
+  # the IAM policies (iam.tf) can point at exact resources before those
+  # exist.
+  ecr_repo       = "${local.name}-backend"                  # step 7: Docker image repository
+  cluster        = local.name                               # step 7: ECS cluster
+  service        = "${local.name}-backend"                  # step 7: ECS service running the API
+  task_family    = "${local.name}-backend"                  # step 7: ECS task definition
+  web_bucket     = "${local.name}-web-${local.account}"     # step 6: React build
+  reports_bucket = "${local.name}-reports-${local.account}" # step 6: nightly CSV reports
+  state_machine  = "${local.name}-report"                   # step 9: Step Functions job
 }
+
+# Looks up the AWS account ID (used in bucket names and ARNs).
+data "aws_caller_identity" "current" {}
