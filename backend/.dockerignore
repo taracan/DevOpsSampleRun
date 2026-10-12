@@ -1,0 +1,18 @@
+# .dockerignore: files Docker must NOT copy into the image.
+#
+# Docker sends the backend/ folder to the build (the "build context").
+# Anything listed here is left out, which keeps the image small and,
+# more importantly, keeps secrets out of it.
+
+# Local virtual environment: the image installs its own packages.
+.venv
+
+# Local settings, including the local DB password. Never ship this;
+# in AWS, settings come from environment variables and Secrets Manager.
+.env
+
+# Python bytecode caches, recreated automatically.
+__pycache__
+
+# Tests aren't needed to run the app.
+tests
