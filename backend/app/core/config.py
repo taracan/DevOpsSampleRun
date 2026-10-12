@@ -1,3 +1,13 @@
+"""App settings, read from environment variables (or a local .env file).
+
+Every setting has a local-development default. In AWS, ECS overrides them
+with environment variables: DB_HOST points at RDS, DB_PORT is 5432, and
+DB_PASSWORD is injected from Secrets Manager. database_url() turns these
+into the connection string SQLAlchemy uses.
+"""
+
+from urllib.parse import quote_plus
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -18,8 +28,9 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env")
 
     def database_url(self, db_name: str | None = None) -> str:
+        # quote_plus: AWS-generated passwords can contain characters like # or : that break a URL.
         return (
-            f"postgresql+psycopg://{self.DB_USER}:{self.DB_PASSWORD}"
+            f"postgresql+psycopg://{self.DB_USER}:{quote_plus(self.DB_PASSWORD)}"
             f"@{self.DB_HOST}:{self.DB_PORT}/{db_name or self.DB_NAME}"
         )
 
