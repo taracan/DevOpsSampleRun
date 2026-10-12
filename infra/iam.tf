@@ -130,6 +130,7 @@ resource "aws_iam_role_policy" "github" {
         Effect = "Allow"
         Action = [
           "ecr:BatchCheckLayerAvailability",
+          "ecr:BatchGetImage", # docker push reads existing manifests
           "ecr:InitiateLayerUpload",
           "ecr:UploadLayerPart",
           "ecr:CompleteLayerUpload",
