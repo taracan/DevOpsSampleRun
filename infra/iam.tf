@@ -19,14 +19,8 @@
 #   scheduler      EventBridge Scheduler (step 9): start Step Functions
 #
 # Secrets Manager: the DB password secret is created and rotated by RDS
-# itself in step 6 (manage_master_user_password), so it never appears in
-# code. RDS-created secrets are named rds!db-<id>; until the DB exists,
-# the execution role may read any secret with that prefix. Step 6
-# tightens this to the exact secret.
-
-locals {
-  db_secret_arn = "arn:aws:secretsmanager:${local.region}:${local.account}:secret:rds!db-*"
-}
+# itself (manage_master_user_password, data.tf), so it never appears in
+# code. The execution role may read exactly that one secret.
 
 # Reused trust policy: "ECS tasks in this account may use this role".
 data "aws_iam_policy_document" "ecs_tasks_trust" {
@@ -65,7 +59,7 @@ resource "aws_iam_role_policy" "ecs_execution_secret" {
     Statement = [{
       Effect   = "Allow"
       Action   = "secretsmanager:GetSecretValue"
-      Resource = local.db_secret_arn
+      Resource = aws_db_instance.main.master_user_secret[0].secret_arn
     }]
   })
 }
