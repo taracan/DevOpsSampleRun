@@ -30,7 +30,7 @@ export default function RegisterPage() {
 
   return (
     <div className="card">
-      <h1>Create an account</h1>
+      <h1>Create your SmallProject account</h1>
       <form onSubmit={handleSubmit}>
         <FormInput label="Name" name="name" value={form.name} onChange={handleChange} required />
         <FormInput label="Email" name="email" type="email" value={form.email} onChange={handleChange} required />
