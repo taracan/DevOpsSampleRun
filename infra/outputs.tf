@@ -59,3 +59,20 @@ output "buckets" {
     reports = aws_s3_bucket.reports.bucket
   }
 }
+
+output "ecr_repository_url" {
+  description = "Push the backend image here (tag: latest)."
+  value       = aws_ecr_repository.backend.repository_url
+}
+
+output "alb_dns_name" {
+  description = "Load balancer address; CloudFront sends /api/* here (step 8)."
+  value       = aws_lb.main.dns_name
+}
+
+output "ecs" {
+  value = {
+    cluster = aws_ecs_cluster.main.name
+    service = aws_ecs_service.backend.name
+  }
+}
