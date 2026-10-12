@@ -156,10 +156,10 @@ resource "aws_iam_role_policy" "github" {
         Resource = "arn:aws:s3:::${local.web_bucket}/*"
       },
       {
-        Sid      = "CacheClear" # distribution ID unknown until step 8
+        Sid      = "CacheClear" # only this site's distribution (cdn.tf)
         Effect   = "Allow"
         Action   = "cloudfront:CreateInvalidation"
-        Resource = "arn:aws:cloudfront::${local.account}:distribution/*"
+        Resource = aws_cloudfront_distribution.main.arn
       },
     ]
   })

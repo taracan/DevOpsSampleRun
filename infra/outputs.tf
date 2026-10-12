@@ -76,3 +76,13 @@ output "ecs" {
     service = aws_ecs_service.backend.name
   }
 }
+
+output "site_url" {
+  description = "The public website address."
+  value       = "https://${aws_cloudfront_distribution.main.domain_name}"
+}
+
+output "cloudfront_distribution_id" {
+  description = "Step 10: used by the deploy workflow to clear the cache."
+  value       = aws_cloudfront_distribution.main.id
+}
