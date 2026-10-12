@@ -86,3 +86,12 @@ output "cloudfront_distribution_id" {
   description = "Step 10: used by the deploy workflow to clear the cache."
   value       = aws_cloudfront_distribution.main.id
 }
+
+output "admin_instance_id" {
+  description = "EC2 admin host; connect with Session Manager."
+  value       = aws_instance.admin.id
+}
+
+output "report_state_machine_arn" {
+  value = aws_sfn_state_machine.report.arn
+}
