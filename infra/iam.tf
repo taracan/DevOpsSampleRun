@@ -96,7 +96,10 @@ resource "aws_iam_openid_connect_provider" "github" {
 resource "aws_iam_role" "github" {
   name = "${local.name}-github-actions"
 
-  # Only workflows running on the main branch of this repo.
+  # Only workflows running on the main branch of this repo. GitHub puts
+  # immutable IDs in the token subject (owner@<owner id>/repo@<repo id>),
+  # so a renamed or re-created repo with the same name can't match.
+  # See: gh api repos/taracan/DevOpsSampleRun/actions/oidc/customization/sub
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
@@ -106,7 +109,7 @@ resource "aws_iam_role" "github" {
       Condition = {
         StringEquals = {
           "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
-          "token.actions.githubusercontent.com:sub" = "repo:taracan/DevOpsSampleRun:ref:refs/heads/main"
+          "token.actions.githubusercontent.com:sub" = "repo:taracan@47918634/DevOpsSampleRun@1410627250:ref:refs/heads/main"
         }
       }
     }]
