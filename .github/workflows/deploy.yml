@@ -18,6 +18,9 @@
 #             (plus the commit SHA, so each version is traceable)
 #          3. restarts the ECS service on the new image and waits until
 #             it is stable (a failed rollout rolls back automatically)
+#          Steps 2-3 run only when backend/ or this workflow changed since
+#          the previous main (or when that can't be determined), so a
+#          frontend-only change skips the image build and ECS restart.
 #          4. builds the React app and uploads it to the S3 web bucket
 #          5. clears the CloudFront cache so visitors get the new files
 #          6. smoke test: calls /api/v1/health through CloudFront
@@ -83,6 +86,21 @@ jobs:
       id-token: write # lets the job request the OIDC token for AWS
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history, to compare with the previous main
+
+      # Compares the previous main (github.event.before) with this commit.
+      # git diff --quiet exits 0 = no changes, 1 = changes, >1 = error
+      # (e.g. unknown commit); anything but 0 deploys the backend, to be safe.
+      - name: Check for backend changes
+        id: changes
+        run: |
+          if git diff --quiet "${{ github.event.before }}" "${{ github.sha }}" -- backend .github/workflows; then
+            echo "backend=false" >> "$GITHUB_OUTPUT"
+            echo "No backend changes: skipping image build and ECS deploy."
+          else
+            echo "backend=true" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Sign in to AWS (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
@@ -91,14 +109,17 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Sign in to ECR
+        if: steps.changes.outputs.backend == 'true'
         uses: aws-actions/amazon-ecr-login@v2
 
       - name: Build and push backend image
+        if: steps.changes.outputs.backend == 'true'
         run: |
           docker build -t "$ECR_REPOSITORY:latest" -t "$ECR_REPOSITORY:${{ github.sha }}" backend
           docker push --all-tags "$ECR_REPOSITORY"
 
       - name: Deploy to ECS and wait until stable
+        if: steps.changes.outputs.backend == 'true'
         run: |
           aws ecs update-service --cluster "$ECS_CLUSTER" --service "$ECS_SERVICE" --force-new-deployment > /dev/null
           aws ecs wait services-stable --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE"
