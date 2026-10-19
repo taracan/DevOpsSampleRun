@@ -3,7 +3,7 @@
 # Kept deliberately quiet for a small project:
 #   - Checked monthly, not weekly.
 #   - All bumps for an ecosystem (patch, minor AND major) are grouped into
-#     one PR, so there are at most 5 PRs a month, one per ecosystem below.
+#     one PR, so there are at most 6 PRs a month, one per ecosystem below.
 #     If a major bump in a group breaks something, the tests in CI show it.
 #     Fix it in that PR, or tell Dependabot to skip that one dependency
 #     (comment "@dependabot ignore <name> major version").
@@ -20,6 +20,7 @@
 #   npm             frontend/package.json + package-lock.json
 #   github-actions  the actions used in .github/workflows (keeps SHA pins fresh)
 #   docker          the base image in backend/Dockerfile
+#   docker-compose  the local Postgres image in docker-compose.yml
 #   terraform       the provider versions in infra/
 
 version: 2
@@ -58,6 +59,17 @@ updates:
         update-types: ["version-update:semver-minor"]
     groups:
       docker:
+        patterns: ["*"]
+
+  - package-ecosystem: docker-compose
+    directory: /
+    schedule:
+      interval: monthly
+    ignore:
+      - dependency-name: postgres
+        update-types: ["version-update:semver-major"] # stays on 16, like RDS
+    groups:
+      docker-compose:
         patterns: ["*"]
 
   - package-ecosystem: terraform
