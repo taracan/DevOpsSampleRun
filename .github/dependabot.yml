@@ -1,0 +1,55 @@
+# dependabot.yml: Dependabot opens PRs that bump our dependencies.
+#
+# Every ecosystem is checked weekly. Minor and patch bumps are grouped into
+# one PR per ecosystem, so there's one PR to review instead of a flood.
+# Major bumps come as separate PRs, because they can break things.
+# Security updates are separate from this file and arrive as soon as an
+# advisory is published.
+#
+#   pip             backend/requirements.txt
+#   npm             frontend/package.json + package-lock.json
+#   github-actions  the actions used in .github/workflows (keeps SHA pins fresh)
+#   docker          the base image in backend/Dockerfile
+#   terraform       the provider versions in infra/
+
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: /backend
+    schedule:
+      interval: weekly
+    groups:
+      pip-minor-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule:
+      interval: weekly
+    groups:
+      npm-minor-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions-minor-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: docker
+    directory: /backend
+    schedule:
+      interval: weekly
+    groups:
+      docker-minor-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: terraform
+    directory: /infra
+    schedule:
+      interval: weekly
+    groups:
+      terraform-minor-patch:
+        update-types: [minor, patch]
