@@ -63,3 +63,13 @@ cp .env.example .env
 npm run dev
 ```
 Open http://localhost:5173
+
+## Repo settings
+The GitHub settings (squash merge only, the rules protecting `main`, and
+the `v*` release tags) are kept as code in
+[`.github/settings/apply-settings.sh`](.github/settings/apply-settings.sh).
+Change them there in a PR, then re-run the script as a repo admin:
+```bash
+DRY_RUN=1 .github/settings/apply-settings.sh   # preview
+.github/settings/apply-settings.sh             # apply
+```
