@@ -1,7 +1,7 @@
 fastapi>=0.118
 uvicorn[standard]>=0.37
 sqlalchemy>=2.0.44
-psycopg[binary]>=3.2.13
+psycopg[binary]>=3.3.6
 pydantic[email]>=2.12
 pydantic-settings>=2.11
 boto3>=1.40
