@@ -13,7 +13,8 @@ React (frontend) → FastAPI (backend) → PostgreSQL (database)
 SmallProject/
 ├── docker-compose.yml          # PostgreSQL container (host port 5433)
 ├── backend/
-│   ├── requirements.txt
+│   ├── requirements.txt, requirements-dev.txt
+│   ├── pyproject.toml          # ruff + pytest settings
 │   ├── .env.example
 │   ├── tests/
 │   └── app/
@@ -63,6 +64,13 @@ cp .env.example .env
 npm run dev
 ```
 Open http://localhost:5173
+
+**4. Backend lint and tests** (needs the database from step 1; tests use their own `smallproject_test` database)
+```bash
+cd backend
+pip install -r requirements-dev.txt
+ruff check . && ruff format --check . && pytest
+```
 
 ## Repo settings
 The GitHub settings (squash merge only, the rules protecting `main`, and
