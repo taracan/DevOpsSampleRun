@@ -147,7 +147,9 @@ jq -n '{
   }
 }' | api PATCH "repos/$REPO"
 
-# Dependabot alerts (needed for the security-update PRs above). No body.
+# Dependabot alerts (needed for the security-update PRs above). Turning
+# them on also enables the Dependency graph, which dependency-review.yml
+# needs: without it that check fails with "not supported". No body.
 if [[ "${DRY_RUN:-0}" == 1 ]]; then
   echo "--- PUT repos/$REPO/vulnerability-alerts"
 else
