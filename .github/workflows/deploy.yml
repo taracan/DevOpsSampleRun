@@ -1,15 +1,14 @@
-# deploy.yml: CI/CD with GitHub Actions. Checks every pull request and
-# deploys every merge to main.
+# deploy.yml: CD with GitHub Actions. Deploys every merge to main.
 #
 # What GitHub Actions is: GitHub runs these jobs on its own machines
 # ("runners") when something happens in the repo. Here:
 #
-#   Pull request to main --> job "build"   (checks only, no AWS access)
-#   Push/merge to main   --> job "build", then job "deploy"
+#   Push/merge to main --> job "deploy"
 #
-# build:   builds the backend Docker image and the React app, to prove
-#          both still build. Branch protection requires this check to
-#          pass before a PR can be merged.
+# The checks on pull requests (lint, tests, build) live in ci.yml. Main
+# only changes through PRs that passed them (the "main" ruleset), so this
+# workflow doesn't repeat them.
+#
 # deploy:  1. signs in to AWS through OIDC: GitHub hands the job a
 #             short-lived token and AWS trusts it only for main of this
 #             repo (role smallproject-github-actions, infra/iam.tf). No
@@ -18,7 +17,7 @@
 #             (plus the commit SHA, so each version is traceable)
 #          3. restarts the ECS service on the new image and waits until
 #             it is stable (a failed rollout rolls back automatically)
-#          Steps 2-3 run only when backend/ or this workflow changed since
+#          Steps 2-3 run only when backend/ or this file changed since
 #          the previous main (or when that can't be determined), so a
 #          frontend-only change skips the image build and ECS restart.
 #          4. builds the React app and uploads it to the S3 web bucket
@@ -33,8 +32,6 @@
 name: deploy
 
 on:
-  pull_request:
-    branches: [main]
   push:
     branches: [main]
 
@@ -57,29 +54,7 @@ permissions:
   contents: read
 
 jobs:
-  build:
-    runs-on: ubuntu-24.04-arm
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Build backend image
-        run: docker build -t backend:check backend
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
-
-      - name: Build frontend
-        working-directory: frontend
-        run: |
-          npm ci
-          npm run build
-
   deploy:
-    needs: build
-    if: github.event_name == 'push'
     runs-on: ubuntu-24.04-arm
     permissions:
       contents: read
@@ -95,7 +70,7 @@ jobs:
       - name: Check for backend changes
         id: changes
         run: |
-          if git diff --quiet "${{ github.event.before }}" "${{ github.sha }}" -- backend .github/workflows; then
+          if git diff --quiet "${{ github.event.before }}" "${{ github.sha }}" -- backend .github/workflows/deploy.yml; then
             echo "backend=false" >> "$GITHUB_OUTPUT"
             echo "No backend changes: skipping image build and ECS deploy."
           else
