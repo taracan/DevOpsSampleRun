@@ -13,8 +13,9 @@
 #   - docker: moving Python to a new minor version (3.12 -> 3.14) changes
 #     the production runtime, so that's done by hand, not by Dependabot.
 #
-# Security updates are separate from this file and still arrive as soon as
-# an advisory is published.
+# Security updates don't wait for the schedule: they open as soon as an
+# advisory affects a dependency we use. They're grouped too ("*-security"),
+# so several advisories in one ecosystem arrive as one PR, not one each.
 #
 #   pip             backend/requirements.txt
 #   npm             frontend/package.json + package-lock.json
@@ -33,6 +34,9 @@ updates:
     groups:
       pip:
         patterns: ["*"]
+      pip-security:
+        applies-to: security-updates
+        patterns: ["*"]
 
   - package-ecosystem: npm
     directory: /frontend
@@ -41,6 +45,9 @@ updates:
     groups:
       npm:
         patterns: ["*"]
+      npm-security:
+        applies-to: security-updates
+        patterns: ["*"]
 
   - package-ecosystem: github-actions
     directory: /
@@ -48,6 +55,9 @@ updates:
       interval: monthly
     groups:
       actions:
+        patterns: ["*"]
+      actions-security:
+        applies-to: security-updates
         patterns: ["*"]
 
   - package-ecosystem: docker
@@ -60,6 +70,9 @@ updates:
     groups:
       docker:
         patterns: ["*"]
+      docker-security:
+        applies-to: security-updates
+        patterns: ["*"]
 
   - package-ecosystem: docker-compose
     directory: /
@@ -71,6 +84,9 @@ updates:
     groups:
       docker-compose:
         patterns: ["*"]
+      docker-compose-security:
+        applies-to: security-updates
+        patterns: ["*"]
 
   - package-ecosystem: terraform
     directory: /infra
@@ -78,4 +94,7 @@ updates:
       interval: monthly
     groups:
       terraform:
+        patterns: ["*"]
+      terraform-security:
+        applies-to: security-updates
         patterns: ["*"]
