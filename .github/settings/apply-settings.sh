@@ -20,6 +20,9 @@
 #        "release-tags-immutable": a v* tag can never be moved or deleted,
 #                                  by anyone.
 #        "release-tags-create":    only repository admins can create one.
+#   5. Security features: secret scanning, push protection (a push that
+#      contains a secret, such as an AWS key, is rejected), Dependabot
+#      alerts and Dependabot security-update PRs.
 #
 # Usage (needs the gh CLI, signed in as a repo admin, and jq):
 #   .github/settings/apply-settings.sh            apply the settings
@@ -35,7 +38,11 @@ REPO="taracan/DevOpsSampleRun"
 
 # Checks that must pass before a PR can merge (job names from the workflows).
 # Later phases add to this list.
-REQUIRED_CHECKS=(build backend-lint backend-test)
+REQUIRED_CHECKS=(
+  build backend-lint backend-test                        # ci.yml
+  "analyze (python)" "analyze (javascript-typescript)" "analyze (actions)" # codeql.yml
+  dependency-review                                      # dependency-review.yml
+)
 
 GITHUB_ACTIONS_APP_ID=15368 # the checks must come from GitHub Actions
 ADMIN_ROLE_ID=5             # built-in "Repository admin" role
@@ -130,3 +137,20 @@ jq -n --argjson admin "$ADMIN_ROLE_ID" '{
   conditions: { ref_name: { include: ["refs/tags/v*"], exclude: [] } },
   rules: [ { type: "creation" } ]
 }' | put_ruleset
+
+# 5. Security features
+jq -n '{
+  security_and_analysis: {
+    secret_scanning: { status: "enabled" },
+    secret_scanning_push_protection: { status: "enabled" },
+    dependabot_security_updates: { status: "enabled" }
+  }
+}' | api PATCH "repos/$REPO"
+
+# Dependabot alerts (needed for the security-update PRs above). No body.
+if [[ "${DRY_RUN:-0}" == 1 ]]; then
+  echo "--- PUT repos/$REPO/vulnerability-alerts"
+else
+  gh api --method PUT "repos/$REPO/vulnerability-alerts"
+  echo "ok: PUT repos/$REPO/vulnerability-alerts"
+fi
