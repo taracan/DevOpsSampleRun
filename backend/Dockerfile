@@ -19,7 +19,7 @@
 #   docker run -p 8000:8000 -e DB_HOST=... -e DB_PASSWORD=... smallproject-backend
 
 # Small official Python base image.
-FROM python:3.12-slim
+FROM python:3.14-slim
 
 WORKDIR /app
 
