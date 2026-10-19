@@ -35,7 +35,7 @@ REPO="taracan/DevOpsSampleRun"
 
 # Checks that must pass before a PR can merge (job names from the workflows).
 # Later phases add to this list.
-REQUIRED_CHECKS=(build)
+REQUIRED_CHECKS=(build backend-lint backend-test)
 
 GITHUB_ACTIONS_APP_ID=15368 # the checks must come from GitHub Actions
 ADMIN_ROLE_ID=5             # built-in "Repository admin" role
