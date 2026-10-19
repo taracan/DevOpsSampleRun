@@ -1,0 +1,12 @@
+# requirements-dev.txt: extra packages for development and CI, on top of
+# the app's own requirements. The Docker image installs only
+# requirements.txt, so none of these ship to production.
+#
+#   pytest  runs the tests in tests/
+#   httpx   used by FastAPI's TestClient to call the app in tests
+#   ruff    linter and formatter
+
+-r requirements.txt
+pytest>=8.4
+httpx>=0.28
+ruff>=0.14
