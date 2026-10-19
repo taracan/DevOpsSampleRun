@@ -39,7 +39,7 @@ REPO="taracan/DevOpsSampleRun"
 # Checks that must pass before a PR can merge (job names from the workflows).
 # Later phases add to this list.
 REQUIRED_CHECKS=(
-  build backend-lint backend-test                        # ci.yml
+  build backend-lint backend-test frontend-lint frontend-test # ci.yml
   "analyze (python)" "analyze (javascript-typescript)" "analyze (actions)" # codeql.yml
   dependency-review                                      # dependency-review.yml
 )

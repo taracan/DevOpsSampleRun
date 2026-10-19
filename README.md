@@ -28,7 +28,7 @@ SmallProject/
 │           ├── router.py
 │           └── endpoints/      # auth.py -> POST /auth/register
 └── frontend/
-    ├── package.json, vite.config.js, index.html, .env.example
+    ├── package.json, vite.config.js (+ Vitest settings), eslint.config.js, index.html, .env.example
     └── src/
         ├── main.jsx, App.jsx
         ├── config/             # env.js (API base URL)
@@ -70,6 +70,12 @@ Open http://localhost:5173
 cd backend
 pip install -r requirements-dev.txt
 ruff check . && ruff format --check . && pytest
+```
+
+**5. Frontend lint and tests** (no backend needed)
+```bash
+cd frontend
+npm run lint && npm test
 ```
 
 ## Repo settings
