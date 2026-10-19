@@ -1,0 +1,16 @@
+# CODEOWNERS: who owns which files. GitHub automatically requests a review
+# from the owner when a PR touches their files.
+#
+# The last matching line wins. "Require review from code owners" is NOT
+# turned on in the main ruleset: with a single maintainer and 0 required
+# approvals it would block every PR. These lines still make ownership of
+# the sensitive paths visible.
+
+# Everything
+*           @taracan
+
+# Infrastructure (Terraform): changes reach AWS when applied from a laptop
+/infra/     @taracan
+
+# CI/CD workflows and repo settings: control deploys and the merge gate
+/.github/   @taracan
