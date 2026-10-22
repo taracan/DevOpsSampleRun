@@ -193,10 +193,12 @@ resource "aws_iam_role_policy" "github" {
         }
       },
       {
-        Sid      = "MigrationLogs" # read the task's log lines
-        Effect   = "Allow"
-        Action   = "logs:GetLogEvents"
-        Resource = "${aws_cloudwatch_log_group.backend.arn}:log-stream:*"
+        Sid    = "MigrationLogs" # read the task's log lines
+        Effect = "Allow"
+        Action = "logs:GetLogEvents"
+        # "<log group ARN>:*" is the form IAM matches for GetLogEvents
+        # (checked with aws iam simulate-custom-policy; ":log-stream:*" was denied).
+        Resource = "${aws_cloudwatch_log_group.backend.arn}:*"
       },
     ]
   })
