@@ -16,7 +16,8 @@
 #                  website, clear the CloudFront cache
 #   ec2            the EC2 admin host (step 9): SSM Session Manager only
 #   sfn            Step Functions (step 9): run the nightly report task
-#   scheduler      EventBridge Scheduler (step 9): start Step Functions
+#   scheduler      EventBridge Scheduler (step 9): start Step Functions;
+#                  Phase B step 7: restart the backend service daily
 #
 # Secrets Manager: the DB password secret is created and rotated by RDS
 # itself (manage_master_user_password, data.tf), so it never appears in
@@ -264,6 +265,21 @@ resource "aws_iam_role_policy" "scheduler" {
       Effect   = "Allow"
       Action   = "states:StartExecution"
       Resource = "arn:aws:states:${local.region}:${local.account}:stateMachine:${local.state_machine}"
+    }]
+  })
+}
+
+# Phase B step 7: the daily restart (jobs.tf) may force a new deployment of
+# the backend service, and nothing else.
+resource "aws_iam_role_policy" "scheduler_restart" {
+  name = "restart-backend"
+  role = aws_iam_role.scheduler.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = "ecs:UpdateService"
+      Resource = "arn:aws:ecs:${local.region}:${local.account}:service/${local.cluster}/${local.service}"
     }]
   })
 }

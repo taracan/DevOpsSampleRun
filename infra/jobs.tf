@@ -1,4 +1,7 @@
-# jobs.tf: the nightly report pipeline (EventBridge Scheduler + Step Functions).
+# jobs.tf: scheduled jobs (EventBridge Scheduler).
+#
+# 1. The nightly report pipeline (Scheduler + Step Functions), below.
+# 2. The daily backend restart (Phase B, step 7), at the end of this file.
 #
 #   EventBridge Scheduler (every night at 02:00 UTC)
 #        | starts
@@ -77,5 +80,49 @@ resource "aws_scheduler_schedule" "report" {
   target {
     arn      = aws_sfn_state_machine.report.arn
     role_arn = aws_iam_role.scheduler.arn
+  }
+}
+
+# ---------------------------------------------------------------------------
+# Daily backend restart (Phase B, step 7)
+#
+# Why: RDS changes the database password every 7 days by itself
+# (manage_master_user_password, data.tf). An ECS task reads DB_PASSWORD only
+# when it STARTS, so a task that has been running since before a rotation
+# still holds the old password. Connections it already has keep working,
+# but every new login fails, and /api/v1/ready would report "db: error".
+#
+# Fix: restart the backend once a day, so tasks are never more than a day
+# old and always start with the current password. A restart here is ECS's
+# normal rolling deployment: a new task starts and must pass the load
+# balancer's /health check before the old one stops, so the site stays up.
+# Same task definition and image; nothing new is deployed.
+#
+#   EventBridge Scheduler (every day at 03:30 UTC, after the 02:00 report)
+#        | calls the ECS API directly (no Lambda or Step Functions needed)
+#        v
+#   ecs:UpdateService --force-new-deployment on smallproject-backend
+#
+# Run it by hand: aws ecs update-service --cluster smallproject
+#   --service smallproject-backend --force-new-deployment
+# ---------------------------------------------------------------------------
+
+resource "aws_scheduler_schedule" "restart" {
+  name                = "${local.name}-daily-restart"
+  schedule_expression = "cron(30 3 * * ? *)" # 03:30 UTC daily
+
+  flexible_time_window {
+    mode = "OFF"
+  }
+
+  target {
+    # "Universal target": the Scheduler calls this AWS API action itself.
+    arn      = "arn:aws:scheduler:::aws-sdk:ecs:updateService"
+    role_arn = aws_iam_role.scheduler.arn
+    input = jsonencode({
+      Cluster            = local.cluster
+      Service            = local.service
+      ForceNewDeployment = true
+    })
   }
 }
