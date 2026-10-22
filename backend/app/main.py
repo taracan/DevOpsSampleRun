@@ -2,10 +2,13 @@
 
 - On start-up, creates the database and tables if missing (lifespan).
 - Mounts the API routes under /api/v1 (e.g. POST /api/v1/auth/register).
-- Health checks, both returning {"status": "ok"}:
+- Liveness checks, both returning {"status": "ok"} without touching the
+  database ("the process is up"):
     /health         used by the load balancer, which calls the container directly
-    /api/v1/health  used through CloudFront, which only forwards /api/* to the
-                    backend (the deploy workflow's smoke test calls this one)
+    /api/v1/health  the same, reachable through CloudFront (which only forwards
+                    /api/* to the backend)
+- Readiness check /api/v1/ready (api/v1/endpoints/health.py) also tests the
+  database; the deploy workflow's smoke test calls that one.
 """
 
 from contextlib import asynccontextmanager

@@ -162,7 +162,7 @@ resource "aws_iam_role_policy" "github" {
       {
         Sid      = "CacheClear" # only this site's distribution (cdn.tf)
         Effect   = "Allow"
-        Action   = "cloudfront:CreateInvalidation"
+        Action   = ["cloudfront:CreateInvalidation", "cloudfront:GetInvalidation"] # Get: wait until done
         Resource = aws_cloudfront_distribution.main.arn
       },
     ]

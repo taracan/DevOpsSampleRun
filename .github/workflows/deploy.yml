@@ -21,8 +21,11 @@
 #          the previous main (or when that can't be determined), so a
 #          frontend-only change skips the image build and ECS restart.
 #          4. builds the React app and uploads it to the S3 web bucket
-#          5. clears the CloudFront cache so visitors get the new files
-#          6. smoke test: calls /api/v1/health through CloudFront
+#          5. clears the CloudFront cache so visitors get the new files,
+#             and waits until that has finished everywhere
+#          6. smoke test: calls /api/v1/ready through CloudFront. Readiness
+#             also logs in to the database, so a release that can't reach
+#             RDS fails here (plain /health would still say "ok")
 #
 # Infrastructure changes are NOT deployed here: Terraform is applied
 # from a laptop. The values below come from `terraform -chdir=infra output`.
@@ -115,8 +118,14 @@ jobs:
           npm run build
           aws s3 sync dist "s3://$WEB_BUCKET" --delete
 
-      - name: Clear CloudFront cache
-        run: aws cloudfront create-invalidation --distribution-id "$CLOUDFRONT_DISTRIBUTION_ID" --paths "/*" > /dev/null
+      - name: Clear CloudFront cache and wait
+        run: |
+          id=$(aws cloudfront create-invalidation --distribution-id "$CLOUDFRONT_DISTRIBUTION_ID" --paths "/*" --query Invalidation.Id --output text)
+          aws cloudfront wait invalidation-completed --distribution-id "$CLOUDFRONT_DISTRIBUTION_ID" --id "$id"
 
-      - name: Smoke test
-        run: curl -fsS "$SITE_URL/api/v1/health" | grep -q '"status":"ok"'
+      # Readiness, not just liveness: the answer must say the database is ok.
+      - name: Smoke test (readiness)
+        run: |
+          body=$(curl -fsS "$SITE_URL/api/v1/ready")
+          echo "$body"
+          echo "$body" | grep -q '"db":"ok"'
