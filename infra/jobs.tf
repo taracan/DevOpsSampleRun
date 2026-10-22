@@ -1,7 +1,9 @@
 # jobs.tf: scheduled jobs (EventBridge Scheduler).
 #
 # 1. The nightly report pipeline (Scheduler + Step Functions), below.
-# 2. The daily backend restart (Phase B, step 7), at the end of this file.
+# 2. Backend restarts so tasks pick up the rotated DB password (Phase B,
+#    step 7), at the end of this file: right after each password change,
+#    plus once a day as a safety net.
 #
 #   EventBridge Scheduler (every night at 02:00 UTC)
 #        | starts
@@ -125,4 +127,72 @@ resource "aws_scheduler_schedule" "restart" {
       ForceNewDeployment = true
     })
   }
+}
+
+# ---------------------------------------------------------------------------
+# Restart right after each password change (Phase B, step 7 follow-up)
+#
+# The daily restart above can leave a gap of up to a day: RDS changes the
+# password "some time during" the 7th day (no fixed time), and can change
+# it early (e.g. "Rotate secret now" in the console). This closes the gap
+# to a few minutes by reacting to the change itself:
+#
+#   Secrets Manager finishes a rotation of the DB secret
+#        | emits "RotationSucceeded" (a CloudTrail service event, which
+#        | EventBridge receives automatically, no trail needed)
+#        v
+#   EventBridge rule "smallproject-db-password-rotated"
+#        | starts (EventBridge rules can't call ecs:UpdateService directly)
+#        v
+#   Step Functions "smallproject-restart": one step, ecs:UpdateService
+#   --force-new-deployment on smallproject-backend (same rolling restart as
+#   the daily one: no downtime)
+#
+# The daily 03:30 restart stays as a safety net in case an event is missed.
+# Run it by hand: AWS console -> Step Functions -> smallproject-restart
+#   -> Start execution.
+# ---------------------------------------------------------------------------
+
+resource "aws_sfn_state_machine" "restart" {
+  name     = "${local.name}-restart"
+  role_arn = aws_iam_role.sfn.arn
+
+  definition = jsonencode({
+    Comment = "Rolling restart of the backend service (new tasks read the current DB password)"
+    StartAt = "Restart"
+    States = {
+      Restart = {
+        Type     = "Task"
+        Resource = "arn:aws:states:::aws-sdk:ecs:updateService"
+        Parameters = {
+          Cluster            = local.cluster
+          Service            = local.service
+          ForceNewDeployment = true
+        }
+        End = true
+      }
+    }
+  })
+}
+
+# Matches the real event recorded on 2026-10-19 (CloudTrail):
+# eventName RotationSucceeded, additionalEventData.SecretId = the DB secret.
+resource "aws_cloudwatch_event_rule" "db_password_rotated" {
+  name        = "${local.name}-db-password-rotated"
+  description = "The RDS master password was rotated: restart the backend"
+  event_pattern = jsonencode({
+    source        = ["aws.secretsmanager"]
+    "detail-type" = ["AWS Service Event via CloudTrail"]
+    detail = {
+      eventSource         = ["secretsmanager.amazonaws.com"]
+      eventName           = ["RotationSucceeded"]
+      additionalEventData = { SecretId = [aws_db_instance.main.master_user_secret[0].secret_arn] }
+    }
+  })
+}
+
+resource "aws_cloudwatch_event_target" "db_password_rotated" {
+  rule     = aws_cloudwatch_event_rule.db_password_rotated.name
+  arn      = aws_sfn_state_machine.restart.arn
+  role_arn = aws_iam_role.events.arn
 }

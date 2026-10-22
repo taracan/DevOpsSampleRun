@@ -15,9 +15,12 @@
 #                  branch only: push image, redeploy ECS, upload the
 #                  website, clear the CloudFront cache
 #   ec2            the EC2 admin host (step 9): SSM Session Manager only
-#   sfn            Step Functions (step 9): run the nightly report task
+#   sfn            Step Functions (step 9): run the nightly report task;
+#                  Phase B step 7: restart the backend service
 #   scheduler      EventBridge Scheduler (step 9): start Step Functions;
 #                  Phase B step 7: restart the backend service daily
+#   events         EventBridge rules (Phase B step 7): start the restart
+#                  workflow when the DB password has been rotated
 #
 # Secrets Manager: the DB password secret is created and rotated by RDS
 # itself (manage_master_user_password, data.tf), so it never appears in
@@ -280,6 +283,49 @@ resource "aws_iam_role_policy" "scheduler_restart" {
       Effect   = "Allow"
       Action   = "ecs:UpdateService"
       Resource = "arn:aws:ecs:${local.region}:${local.account}:service/${local.cluster}/${local.service}"
+    }]
+  })
+}
+
+# Phase B step 7 follow-up: the restart workflow (Step Functions, jobs.tf)
+# may force a new deployment of the backend service, and nothing else.
+resource "aws_iam_role_policy" "sfn_restart" {
+  name = "restart-backend"
+  role = aws_iam_role.sfn.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = "ecs:UpdateService"
+      Resource = "arn:aws:ecs:${local.region}:${local.account}:service/${local.cluster}/${local.service}"
+    }]
+  })
+}
+
+# EventBridge rules (jobs.tf) use this role to start the restart workflow,
+# and only that workflow.
+resource "aws_iam_role" "events" {
+  name = "${local.name}-events"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Action    = "sts:AssumeRole"
+      Principal = { Service = "events.amazonaws.com" }
+      Condition = { StringEquals = { "aws:SourceAccount" = local.account } }
+    }]
+  })
+}
+
+resource "aws_iam_role_policy" "events" {
+  name = "start-restart"
+  role = aws_iam_role.events.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = "states:StartExecution"
+      Resource = aws_sfn_state_machine.restart.arn
     }]
   })
 }
