@@ -15,8 +15,10 @@
 #             AWS keys are stored in GitHub.
 #          2. builds the backend image and pushes it to ECR as :latest
 #             (plus the commit SHA, so each version is traceable)
-#          3. runs the database migrations (Alembic) as a one-off ECS task
-#             with the new image: `python -m app.db.migrate`, in the same
+#          3. if migrations changed: snapshots the database first (keeps the
+#             newest 3 pre-deploy snapshots), then runs the database
+#             migrations (Alembic) as a one-off ECS task
+#             with the new image, `python -m app.db.migrate`, in the same
 #             private network as the service (RDS isn't reachable from
 #             GitHub's runners). If it fails, the deploy stops here and the
 #             old version keeps running.
@@ -54,6 +56,7 @@ env:
   ECR_REPOSITORY: 631571737116.dkr.ecr.us-east-1.amazonaws.com/smallproject-backend
   ECS_CLUSTER: smallproject
   ECS_SERVICE: smallproject-backend
+  DB_INSTANCE: smallproject
   WEB_BUCKET: smallproject-web-631571737116
   CLOUDFRONT_DISTRIBUTION_ID: EWAOVPOVCP7SH
   SITE_URL: https://d3u96oxec6f0pb.cloudfront.net
@@ -85,6 +88,12 @@ jobs:
           else
             echo "backend=true" >> "$GITHUB_OUTPUT"
           fi
+          # New or changed migrations? Then take a database snapshot first.
+          if git diff --quiet "${{ github.event.before }}" "${{ github.sha }}" -- backend/migrations; then
+            echo "migrations=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "migrations=true" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Sign in to AWS (OIDC)
         uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
@@ -101,6 +110,27 @@ jobs:
         run: |
           docker build -t "$ECR_REPOSITORY:latest" -t "$ECR_REPOSITORY:${{ github.sha }}" backend
           docker push --all-tags "$ECR_REPOSITORY"
+
+      # Safety net for schema changes: when this push changes migrations,
+      # snapshot the database BEFORE they run (a few minutes) and keep only
+      # the newest 3 of these snapshots. Restore one only in a disaster; the
+      # restore drill (restore-drill.yml) checks that restoring works.
+      - name: Snapshot the database before migrations
+        if: steps.changes.outputs.backend == 'true' && steps.changes.outputs.migrations == 'true'
+        run: |
+          snap="smallproject-predeploy-${GITHUB_SHA::7}"
+          if ! aws rds describe-db-snapshots --db-snapshot-identifier "$snap" > /dev/null 2>&1; then
+            aws rds create-db-snapshot --db-instance-identifier "$DB_INSTANCE" --db-snapshot-identifier "$snap" > /dev/null
+          fi
+          aws rds wait db-snapshot-available --db-snapshot-identifier "$snap"
+          echo "Snapshot ready: $snap"
+          old=$(aws rds describe-db-snapshots --db-instance-identifier "$DB_INSTANCE" --snapshot-type manual \
+            --query "sort_by(DBSnapshots[?starts_with(DBSnapshotIdentifier, 'smallproject-predeploy-')], &SnapshotCreateTime)[:-3].DBSnapshotIdentifier" \
+            --output text)
+          for o in $old; do
+            echo "Deleting old pre-deploy snapshot: $o"
+            aws rds delete-db-snapshot --db-snapshot-identifier "$o" > /dev/null
+          done
 
       # One-off ECS task: same task definition as the service (its :latest
       # image is the one just pushed), same private subnets and security
