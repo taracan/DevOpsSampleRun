@@ -1,9 +1,8 @@
 # jobs.tf: scheduled jobs (EventBridge Scheduler).
 #
 # 1. The nightly report pipeline (Scheduler + Step Functions), below.
-# 2. Backend restarts so tasks pick up the rotated DB password (Phase B,
-#    step 7), at the end of this file: right after each password change,
-#    plus once a day as a safety net.
+# 2. A backend restart right after each DB password change (Phase B,
+#    step 7), at the end of this file.
 #
 #   EventBridge Scheduler (every night at 02:00 UTC)
 #        | starts
@@ -86,71 +85,36 @@ resource "aws_scheduler_schedule" "report" {
 }
 
 # ---------------------------------------------------------------------------
-# Daily backend restart (Phase B, step 7)
+# Restart right after each DB password change (Phase B, step 7)
 #
 # Why: RDS changes the database password every 7 days by itself
-# (manage_master_user_password, data.tf). An ECS task reads DB_PASSWORD only
-# when it STARTS, so a task that has been running since before a rotation
-# still holds the old password. Connections it already has keep working,
-# but every new login fails, and /api/v1/ready would report "db: error".
+# (manage_master_user_password, data.tf), at no fixed time on that day, and
+# can change it early (e.g. "Rotate secret now"). An ECS task reads
+# DB_PASSWORD only when it STARTS, so the running task keeps the old
+# password: connections it already has keep working, but every new login
+# fails and /api/v1/ready reports "db: error".
 #
-# Fix: restart the backend once a day, so tasks are never more than a day
-# old and always start with the current password. A restart here is ECS's
-# normal rolling deployment: a new task starts and must pass the load
-# balancer's /health check before the old one stops, so the site stays up.
-# Same task definition and image; nothing new is deployed.
-#
-#   EventBridge Scheduler (every day at 03:30 UTC, after the 02:00 report)
-#        | calls the ECS API directly (no Lambda or Step Functions needed)
-#        v
-#   ecs:UpdateService --force-new-deployment on smallproject-backend
-#
-# Run it by hand: aws ecs update-service --cluster smallproject
-#   --service smallproject-backend --force-new-deployment
-# ---------------------------------------------------------------------------
-
-resource "aws_scheduler_schedule" "restart" {
-  name                = "${local.name}-daily-restart"
-  schedule_expression = "cron(30 3 * * ? *)" # 03:30 UTC daily
-
-  flexible_time_window {
-    mode = "OFF"
-  }
-
-  target {
-    # "Universal target": the Scheduler calls this AWS API action itself.
-    arn      = "arn:aws:scheduler:::aws-sdk:ecs:updateService"
-    role_arn = aws_iam_role.scheduler.arn
-    input = jsonencode({
-      Cluster            = local.cluster
-      Service            = local.service
-      ForceNewDeployment = true
-    })
-  }
-}
-
-# ---------------------------------------------------------------------------
-# Restart right after each password change (Phase B, step 7 follow-up)
-#
-# The daily restart above can leave a gap of up to a day: RDS changes the
-# password "some time during" the 7th day (no fixed time), and can change
-# it early (e.g. "Rotate secret now" in the console). This closes the gap
-# to a few minutes by reacting to the change itself:
+# Fix: restart the backend as soon as the change is done, about once a week.
+# A restart is ECS's normal rolling deployment: a new task (which reads the
+# new password) must pass the load balancer's /health check before the old
+# one stops. Same image and settings; nothing new is deployed.
 #
 #   Secrets Manager finishes a rotation of the DB secret
-#        | emits "RotationSucceeded" (a CloudTrail service event, which
-#        | EventBridge receives automatically, no trail needed)
+#        | emits "RotationSucceeded", an "AWS Service Event via CloudTrail".
+#        | EventBridge only receives those because a CloudTrail trail
+#        | exists (trail.tf). Without it, this never fired (2026-10-22).
 #        v
 #   EventBridge rule "smallproject-db-password-rotated"
 #        | starts (EventBridge rules can't call ecs:UpdateService directly)
 #        v
 #   Step Functions "smallproject-restart": one step, ecs:UpdateService
-#   --force-new-deployment on smallproject-backend (same rolling restart as
-#   the daily one: no downtime)
+#   --force-new-deployment on smallproject-backend
 #
-# The daily 03:30 restart stays as a safety net in case an event is missed.
-# Run it by hand: AWS console -> Step Functions -> smallproject-restart
-#   -> Start execution.
+# Expect a few minutes of "db: error" per change: the database switches to
+# the new password shortly before RotationSucceeded, and the rolling restart
+# takes about 4 minutes. AWS delivers these events "on a best effort basis",
+# so if one is ever missed, run the restart by hand:
+#   AWS console -> Step Functions -> smallproject-restart -> Start execution
 # ---------------------------------------------------------------------------
 
 resource "aws_sfn_state_machine" "restart" {

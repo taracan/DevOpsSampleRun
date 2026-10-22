@@ -17,8 +17,7 @@
 #   ec2            the EC2 admin host (step 9): SSM Session Manager only
 #   sfn            Step Functions (step 9): run the nightly report task;
 #                  Phase B step 7: restart the backend service
-#   scheduler      EventBridge Scheduler (step 9): start Step Functions;
-#                  Phase B step 7: restart the backend service daily
+#   scheduler      EventBridge Scheduler (step 9): start Step Functions
 #   events         EventBridge rules (Phase B step 7): start the restart
 #                  workflow when the DB password has been rotated
 #
@@ -272,22 +271,7 @@ resource "aws_iam_role_policy" "scheduler" {
   })
 }
 
-# Phase B step 7: the daily restart (jobs.tf) may force a new deployment of
-# the backend service, and nothing else.
-resource "aws_iam_role_policy" "scheduler_restart" {
-  name = "restart-backend"
-  role = aws_iam_role.scheduler.id
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Effect   = "Allow"
-      Action   = "ecs:UpdateService"
-      Resource = "arn:aws:ecs:${local.region}:${local.account}:service/${local.cluster}/${local.service}"
-    }]
-  })
-}
-
-# Phase B step 7 follow-up: the restart workflow (Step Functions, jobs.tf)
+# Phase B step 7: the restart workflow (Step Functions, jobs.tf)
 # may force a new deployment of the backend service, and nothing else.
 resource "aws_iam_role_policy" "sfn_restart" {
   name = "restart-backend"
