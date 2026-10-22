@@ -16,11 +16,12 @@ SmallProject/
 │   ├── requirements.txt, requirements-dev.txt
 │   ├── pyproject.toml          # ruff + pytest settings
 │   ├── .env.example
+│   ├── alembic.ini, migrations/  # database migrations (Alembic), see migrations/README.md
 │   ├── tests/
 │   └── app/
-│       ├── main.py             # FastAPI app, CORS, startup
+│       ├── main.py             # FastAPI app, CORS, health checks
 │       ├── core/               # config.py (settings), security.py (password hashing)
-│       ├── db/                 # base.py, session.py, init_db.py (creates DB + tables)
+│       ├── db/                 # base.py, session.py, migrate.py (creates DB, runs migrations)
 │       ├── models/             # SQLAlchemy ORM models (user.py)
 │       ├── schemas/            # Pydantic request/response schemas
 │       ├── services/           # business logic (user_service.py)
@@ -52,6 +53,7 @@ cd backend
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
+python -m app.db.migrate      # create the database and tables (re-run after pulling)
 uvicorn app.main:app --reload
 ```
 API: http://localhost:8000 · Docs: http://localhost:8000/docs

@@ -12,8 +12,9 @@
 #                  Secrets Manager
 #   ecs_task       the code inside the container: write reports to S3
 #   github         GitHub Actions deploy workflow (step 10), main
-#                  branch only: push image, redeploy ECS, upload the
-#                  website, clear the CloudFront cache
+#                  branch only: push image, run the database migrations
+#                  as a one-off ECS task (Phase B step 8), redeploy ECS,
+#                  upload the website, clear the CloudFront cache
 #   ec2            the EC2 admin host (step 9): SSM Session Manager only
 #   sfn            Step Functions (step 9): run the nightly report task;
 #                  Phase B step 7: restart the backend service
@@ -167,6 +168,35 @@ resource "aws_iam_role_policy" "github" {
         Effect   = "Allow"
         Action   = ["cloudfront:CreateInvalidation", "cloudfront:GetInvalidation"] # Get: wait until done
         Resource = aws_cloudfront_distribution.main.arn
+      },
+      # Phase B step 8: run the database migrations as a one-off ECS task
+      # (deploy.yml), wait for it, and print its log.
+      {
+        Sid      = "MigrationRunTask" # only the backend task definition
+        Effect   = "Allow"
+        Action   = "ecs:RunTask"
+        Resource = "arn:aws:ecs:${local.region}:${local.account}:task-definition/${local.task_family}:*"
+      },
+      {
+        Sid      = "MigrationWatchTask" # wait for it to stop, read its exit code
+        Effect   = "Allow"
+        Action   = "ecs:DescribeTasks"
+        Resource = "arn:aws:ecs:${local.region}:${local.account}:task/${local.cluster}/*"
+      },
+      {
+        Sid      = "MigrationPassRoles" # hand the two ECS roles to the task, for ECS only
+        Effect   = "Allow"
+        Action   = "iam:PassRole"
+        Resource = [aws_iam_role.ecs_execution.arn, aws_iam_role.ecs_task.arn]
+        Condition = {
+          StringEquals = { "iam:PassedToService" = "ecs-tasks.amazonaws.com" }
+        }
+      },
+      {
+        Sid      = "MigrationLogs" # read the task's log lines
+        Effect   = "Allow"
+        Action   = "logs:GetLogEvents"
+        Resource = "${aws_cloudwatch_log_group.backend.arn}:log-stream:*"
       },
     ]
   })
