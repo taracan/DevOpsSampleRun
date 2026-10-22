@@ -30,8 +30,12 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Then copy the application code.
+# Then copy the application code, plus the database migrations
+# (alembic.ini + migrations/), which the deploy runs from this same image
+# as a one-off task: `python -m app.db.migrate`.
 COPY app ./app
+COPY alembic.ini .
+COPY migrations ./migrations
 
 # Documents the port the API listens on.
 EXPOSE 8000

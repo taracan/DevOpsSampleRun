@@ -15,15 +15,20 @@
 #             AWS keys are stored in GitHub.
 #          2. builds the backend image and pushes it to ECR as :latest
 #             (plus the commit SHA, so each version is traceable)
-#          3. restarts the ECS service on the new image and waits until
+#          3. runs the database migrations (Alembic) as a one-off ECS task
+#             with the new image: `python -m app.db.migrate`, in the same
+#             private network as the service (RDS isn't reachable from
+#             GitHub's runners). If it fails, the deploy stops here and the
+#             old version keeps running.
+#          4. restarts the ECS service on the new image and waits until
 #             it is stable (a failed rollout rolls back automatically)
-#          Steps 2-3 run only when backend/ or this file changed since
+#          Steps 2-4 run only when backend/ or this file changed since
 #          the previous main (or when that can't be determined), so a
 #          frontend-only change skips the image build and ECS restart.
-#          4. builds the React app and uploads it to the S3 web bucket
-#          5. clears the CloudFront cache so visitors get the new files,
+#          5. builds the React app and uploads it to the S3 web bucket
+#          6. clears the CloudFront cache so visitors get the new files,
 #             and waits until that has finished everywhere
-#          6. smoke test: calls /api/v1/ready through CloudFront. Readiness
+#          7. smoke test: calls /api/v1/ready through CloudFront. Readiness
 #             also logs in to the database, so a release that can't reach
 #             RDS fails here (plain /health would still say "ok")
 #
@@ -96,6 +101,31 @@ jobs:
         run: |
           docker build -t "$ECR_REPOSITORY:latest" -t "$ECR_REPOSITORY:${{ github.sha }}" backend
           docker push --all-tags "$ECR_REPOSITORY"
+
+      # One-off ECS task: same task definition as the service (its :latest
+      # image is the one just pushed), same private subnets and security
+      # group, command replaced by the migration entry point. Waits for it
+      # to stop, prints its log, and fails the deploy unless it exited 0.
+      - name: Run database migrations (one-off ECS task)
+        if: steps.changes.outputs.backend == 'true'
+        run: |
+          svc=$(aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" --query 'services[0]')
+          task=$(aws ecs run-task --cluster "$ECS_CLUSTER" --launch-type FARGATE \
+            --task-definition "$(echo "$svc" | jq -r .taskDefinition)" \
+            --network-configuration "$(echo "$svc" | jq -c .networkConfiguration)" \
+            --overrides '{"containerOverrides":[{"name":"backend","command":["python","-m","app.db.migrate"]}]}' \
+            --started-by "migrate-${GITHUB_SHA::7}" \
+            --query 'tasks[0].taskArn' --output text)
+          echo "Migration task: $task"
+          aws ecs wait tasks-stopped --cluster "$ECS_CLUSTER" --tasks "$task"
+          result=$(aws ecs describe-tasks --cluster "$ECS_CLUSTER" --tasks "$task" \
+            --query 'tasks[0].[containers[0].exitCode, stoppedReason]' --output text)
+          echo "--- migration log ---"
+          aws logs get-log-events --log-group-name /ecs/smallproject-backend \
+            --log-stream-name "backend/backend/${task##*/}" --start-from-head \
+            --query 'events[].message' --output text | tr '\t' '\n' || true
+          echo "--- exit code and reason: $result"
+          [ "$(echo "$result" | cut -f1)" = "0" ] || { echo "::error::Database migrations failed: $result"; exit 1; }
 
       - name: Deploy to ECS and wait until stable
         if: steps.changes.outputs.backend == 'true'

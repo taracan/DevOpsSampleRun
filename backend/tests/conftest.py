@@ -6,9 +6,10 @@ is imported, because app/db/session.py builds its engine at import time.
 The other DB_* settings come from the environment as usual: locally, the
 docker compose Postgres on port 5433; in CI, a Postgres service on 5432.
 
-  client  a TestClient for the app. Entering it runs the app's real
-          start-up (lifespan), which creates the test database and tables,
-          just like in production. Shared by the whole test session.
+  client  a TestClient for the app. Before it starts, the test database
+          is created and migrated with the same entry point the deploy
+          uses (app.db.migrate), so every test run also runs the Alembic
+          migrations. Shared by the whole test session.
   db      runs around every test and empties the users table afterwards,
           so each test starts from a clean database.
 """
@@ -21,12 +22,14 @@ import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 from sqlalchemy import text  # noqa: E402
 
+from app.db.migrate import migrate  # noqa: E402
 from app.db.session import SessionLocal, engine  # noqa: E402
 from app.main import app  # noqa: E402
 
 
 @pytest.fixture(scope="session")
 def client():
+    migrate()
     with TestClient(app) as c:
         yield c
 

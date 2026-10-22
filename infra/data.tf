@@ -1,8 +1,9 @@
 # data.tf: where data lives. An RDS PostgreSQL database and two S3 buckets.
 #
 # RDS (managed PostgreSQL):
-#   - Stores the users table. The backend creates the table on its first
-#     start (app/db/init_db.py), so no migration step is needed.
+#   - Stores the users table. Its schema is managed by Alembic migrations
+#     (backend/migrations/), which every backend deploy runs as a one-off
+#     ECS task before the new version goes live (deploy.yml).
 #   - Placed in the PRIVATE subnets and not publicly accessible. Only
 #     ECS and the EC2 admin host can connect (rds security group,
 #     network.tf).
