@@ -3,7 +3,7 @@
 # RDS (managed PostgreSQL):
 #   - Stores the users table. Its schema is managed by Alembic migrations
 #     (backend/migrations/), which every backend deploy runs as a one-off
-#     ECS task before the new version goes live (deploy.yml).
+#     ECS task before the new version goes live (deploy-backend.yml).
 #   - Placed in the PRIVATE subnets and not publicly accessible. Only
 #     ECS and the EC2 admin host can connect (rds security group,
 #     network.tf).
@@ -15,8 +15,6 @@
 #
 # S3 buckets (private by default: AWS blocks public access and encrypts
 # every new bucket automatically):
-#   - web:     the React build. Only CloudFront reads it (step 8);
-#              GitHub Actions uploads it (step 10).
 #   - reports: nightly CSV reports from the job (step 9). A lifecycle
 #              rule moves them to cheaper Glacier storage after 30 days.
 #
@@ -58,11 +56,6 @@ resource "aws_db_instance" "main" {
 }
 
 # ---------- S3 ----------
-resource "aws_s3_bucket" "web" {
-  bucket        = local.web_bucket
-  force_destroy = true # dev only: destroy even if not empty
-}
-
 resource "aws_s3_bucket" "reports" {
   bucket        = local.reports_bucket
   force_destroy = true # dev only: destroy even if not empty

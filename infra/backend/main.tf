@@ -1,4 +1,8 @@
-# main.tf: Terraform settings shared by every other file in infra/.
+# main.tf: Terraform settings shared by every other file in infra/backend/.
+#
+# infra/backend/ is the backend's AWS stack: network, ECS, load balancer,
+# database, admin host, jobs, alarms, trail. The website (S3 + CloudFront)
+# is a separate stack in infra/frontend/, with its own state and workflow.
 #
 # What Terraform is: you describe the AWS resources you want in .tf
 # files, and `terraform apply` creates or updates them to match. All .tf
@@ -11,15 +15,15 @@
 #   - locals {}     shared values (name prefix, network ranges) the
 #                   other files reuse.
 #
-# State lives in the S3 bucket smallproject-tfstate-631571737116. It was
-# created once by hand-run bootstrap; its own state is in
+# State lives in the S3 bucket smallproject-tfstate-631571737116, one file
+# per environment (envs/<env>/state.tfbackend). The bucket was created
+# once by hand-run bootstrap; its own state is in
 # infra/bootstrap/terraform.tfstate, which is not committed.
 #
-# Usage (from the repo root, after `aws login`):
-#   eval "$(aws configure export-credentials --format env)"
-#   terraform -chdir=infra init
-#   terraform -chdir=infra plan
-#   terraform -chdir=infra apply
+# Usage: GitHub Actions runs Terraform (.github/workflows/terraform.yml):
+# deploy-backend.yml calls it with stack=backend: a plan on every PR that
+# touches infra/backend/ or backend/, apply to dev on merge to main, apply
+# to beta from release.yml; plus a Run workflow button for apply/destroy.
 
 terraform {
   # 1.10+ supports locking the state with a lock file in S3 (use_lockfile).
@@ -32,13 +36,8 @@ terraform {
     }
   }
 
-  backend "s3" {
-    bucket       = "smallproject-tfstate-631571737116"
-    key          = "smallproject/terraform.tfstate"
-    region       = "us-east-1"
-    encrypt      = true
-    use_lockfile = true
-  }
+  # Filled in by `terraform init -backend-config=envs/<env>/state.tfbackend`.
+  backend "s3" {}
 }
 
 provider "aws" {
@@ -48,14 +47,16 @@ provider "aws" {
   # (Resource Groups & Tag Editor -> tag Project = smallproject).
   default_tags {
     tags = {
-      Project   = "smallproject"
-      ManagedBy = "terraform"
+      Project     = "smallproject"
+      Environment = var.env
+      Component   = "backend" # infra/frontend/ tags its resources "frontend"
+      ManagedBy   = "terraform"
     }
   }
 }
 
 locals {
-  name   = "smallproject" # prefix for resource names
+  name   = var.name # prefix for resource names: smallproject (dev), smallproject-beta
   region = "us-east-1"
 
   # Two availability zones (separate data centers): the load balancer
@@ -78,7 +79,6 @@ locals {
   cluster        = local.name                               # step 7: ECS cluster
   service        = "${local.name}-backend"                  # step 7: ECS service running the API
   task_family    = "${local.name}-backend"                  # step 7: ECS task definition
-  web_bucket     = "${local.name}-web-${local.account}"     # step 6: React build
   reports_bucket = "${local.name}-reports-${local.account}" # step 6: nightly CSV reports
   state_machine  = "${local.name}-report"                   # step 9: Step Functions job
 }

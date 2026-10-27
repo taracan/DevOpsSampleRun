@@ -4,6 +4,11 @@
   these comment markers don't show up in the published PR.
 -->
 
+<!-- Title: start with the Jira ticket number, e.g. "SI-12 Supplier sync". -->
+
+## Jira
+<!-- Link to the ticket. -->
+
 ## What / Why
 <!-- What does this PR change, and why is it needed? -->
 
@@ -12,5 +17,5 @@
 
 ## Checklist
 - [ ] Lint and tests pass locally
-- [ ] Infra changes (if any) applied with Terraform from a laptop: CI does not deploy `infra/`
+- [ ] Infra changes (if any): the `terraform` plan on this PR shows what will change
 - [ ] No secrets committed (keys, passwords, `.env` files)

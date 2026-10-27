@@ -18,7 +18,7 @@
 # (instead of using an old one) means the copy has the CURRENT database
 # password, which is the one the ECS task already reads.
 #
-# Sign-in: the same GitHub OIDC role as deploy.yml (main branch only).
+# Sign-in: the dev GitHub OIDC role (it trusts main for this workflow).
 # Runtime: about 20-30 minutes, mostly AWS creating and deleting the copy.
 
 name: restore-drill
@@ -86,7 +86,7 @@ jobs:
           echo "host=$host" >> "$GITHUB_OUTPUT"
           echo "Temporary database ready: $host"
 
-      # Same pattern as the migration step in deploy.yml: a one-off task with
+      # Same pattern as the migration step in deploy-backend.yml: a one-off task with
       # the service's task definition and network, here with DB_HOST pointed
       # at the restored copy and the check command.
       - name: Check the restored data (one-off ECS task)

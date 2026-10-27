@@ -1,0 +1,28 @@
+# build-scraper.yml: builds the scraper image whenever scraper/ changes.
+#
+# Build only for now: there is no ECR repository or ECS service for the scraper
+# yet. When there is, copy the build/push and deploy steps from
+# deploy-backend.yml.
+
+name: build-scraper
+
+on:
+  pull_request:
+    branches: [main]
+    paths: [scraper/**, .github/workflows/build-scraper.yml]
+  push:
+    branches: [main]
+    paths: [scraper/**, .github/workflows/build-scraper.yml]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false # don't leave the token in .git/config
+
+      - run: docker build -t scraper-check scraper

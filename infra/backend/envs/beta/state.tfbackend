@@ -1,0 +1,7 @@
+# state.tfbackend (beta): where beta's backend Terraform state is stored.
+# Same bucket as dev, its own file.
+bucket       = "smallproject-tfstate-631571737116"
+key          = "smallproject-beta/terraform.tfstate"
+region       = "us-east-1"
+encrypt      = true
+use_lockfile = true

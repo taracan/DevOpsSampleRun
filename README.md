@@ -28,6 +28,10 @@ SmallProject/
 │       └── api/v1/
 │           ├── router.py
 │           └── endpoints/      # auth.py -> POST /auth/register
+├── scraper/, ai/                # placeholders: Dockerfile + main.py, image build only
+├── infra/backend/              # Terraform for the backend (network, ECS, DB, jobs); envs/dev, envs/beta
+├── infra/frontend/             # Terraform for the website (S3 + CloudFront); envs/dev, envs/beta
+├── .github/workflows/          # CI, deploy-backend/-frontend (each runs its own terraform), build-*, release
 └── frontend/
     ├── package.json, vite.config.js (+ Vitest settings), eslint.config.js, index.html, .env.example
     └── src/
@@ -80,12 +84,35 @@ cd frontend
 npm run lint && npm test
 ```
 
+## Environments, releases and undo
+Two copies of the stack run in one AWS account: **dev** (`smallproject-*`) and
+**beta** (`smallproject-beta-*`), each with its own deploy role that can only
+touch its own resources. Everything runs from GitHub Actions; nothing is run
+from a laptop.
+
+| What | How |
+|---|---|
+| Change AWS (Terraform) | Two stacks, `infra/backend/` and `infra/frontend/`, each with its own state. A PR touching one shows its plan; merging applies it to dev, then deploys that part (`deploy-backend.yml` / `deploy-frontend.yml` call `terraform.yml`) |
+| Ship to dev | Merge to `main`: `deploy-backend.yml` / `deploy-frontend.yml` run for the part that changed |
+| Ship to beta | Actions → **release** → Run workflow: version `1.3`, tickets `SI-1,SI-2`. It cuts `release/1.3` with only those tickets' changes and deploys it to beta after your approval |
+| Mark a release | When beta looks good, publish tag `v1.3` on `release/1.3` from the Releases page |
+| Turn an environment off | Actions → **terraform** → stack `frontend`, then stack `backend`; env, `destroy`, type the env name. A database snapshot is kept |
+| API keys | Secrets Manager console → `<env prefix>/app` (JSON), then add the key to `secrets` in `infra/backend/app.tf` |
+
+Every PR title starts with its Jira ticket number, e.g. `SI-12 Supplier sync`
+(`pr-title.yml`); that is how the release button finds a feature.
+
+**Undo, from smallest to biggest**
+1. Automatic: if new backend tasks fail their health checks, ECS rolls back.
+2. Revert the PR and merge: the pipeline redeploys the old code.
+3. Fast backend undo: Actions → **deploy-backend** → Run workflow with the env
+   and the full commit SHA of a version that worked.
+4. Database: restore the `<db>-predeploy-<sha>` snapshot taken before migrations.
+5. Infrastructure: revert the `infra/backend/` or `infra/frontend/` PR; merging applies the old setup.
+
 ## Repo settings
 The GitHub settings (squash merge only, the rules protecting `main`, and
 the `v*` release tags) are kept as code in
 [`.github/settings/apply-settings.sh`](.github/settings/apply-settings.sh).
-Change them there in a PR, then re-run the script as a repo admin:
-```bash
-DRY_RUN=1 .github/settings/apply-settings.sh   # preview
-.github/settings/apply-settings.sh             # apply
-```
+Change them there in a PR, then apply them with Actions → **repo-settings**
+→ Run workflow (tick *dry run* to preview first).

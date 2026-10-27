@@ -23,10 +23,14 @@
 #   5. Security features: secret scanning, push protection (a push that
 #      contains a secret, such as an AWS key, is rejected), Dependabot
 #      alerts and Dependabot security-update PRs.
+#   6. Deployment environments: dev (no gate) and beta (waits for the
+#      owner's approval before any job that uses it starts).
+#   7. Ruleset "release-branches": release/* branches (made by release.yml)
+#      can't be force-pushed or deleted.
 #
-# Usage (needs the gh CLI, signed in as a repo admin, and jq):
-#   .github/settings/apply-settings.sh            apply the settings
-#   DRY_RUN=1 .github/settings/apply-settings.sh  only print what it would send
+# Usage: Actions -> repo-settings -> Run workflow (repo-settings.yml), which
+# runs this script with the ADMIN_TOKEN secret. The script itself needs the
+# gh CLI, a repo-admin token and jq; DRY_RUN=1 only prints what it would send.
 #
 # Read the live settings back:
 #   gh repo view --json squashMergeAllowed,mergeCommitAllowed,rebaseMergeAllowed,deleteBranchOnMerge
@@ -42,10 +46,12 @@ REQUIRED_CHECKS=(
   build backend-lint backend-test frontend-lint frontend-test # ci.yml
   "analyze (python)" "analyze (javascript-typescript)" "analyze (actions)" # codeql.yml
   dependency-review                                      # dependency-review.yml
+  pr-title                                               # pr-title.yml
 )
 
 GITHUB_ACTIONS_APP_ID=15368 # the checks must come from GitHub Actions
 ADMIN_ROLE_ID=5             # built-in "Repository admin" role
+OWNER_USER_ID=47918634      # taracan: approves beta deployments
 
 # Sends one API call, or prints it when DRY_RUN=1. Body is read from stdin.
 api() {
@@ -156,3 +162,21 @@ else
   gh api --method PUT "repos/$REPO/vulnerability-alerts"
   echo "ok: PUT repos/$REPO/vulnerability-alerts"
 fi
+
+# 6. Deployment environments. Their variables are written by terraform.yml.
+jq -n '{}' | api PUT "repos/$REPO/environments/dev"
+
+jq -n --argjson owner "$OWNER_USER_ID" '{
+  reviewers: [ { type: "User", id: $owner } ],
+  deployment_branch_policy: null
+}' | api PUT "repos/$REPO/environments/beta"
+
+# 7. Release branches
+jq -n '{
+  name: "release-branches",
+  target: "branch",
+  enforcement: "active",
+  bypass_actors: [],
+  conditions: { ref_name: { include: ["refs/heads/release/*"], exclude: [] } },
+  rules: [ { type: "deletion" }, { type: "non_fast_forward" } ]
+}' | put_ruleset

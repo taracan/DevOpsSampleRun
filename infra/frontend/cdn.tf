@@ -1,4 +1,5 @@
-# cdn.tf: CloudFront, the public front door of the site.
+# cdn.tf: the website: the S3 bucket with the React build, and CloudFront,
+# the public front door of the site.
 #
 #   Browser --HTTPS--> CloudFront (https://<id>.cloudfront.net)
 #                        |-- /api/*  --> ALB --> ECS backend   (never cached)
@@ -14,13 +15,24 @@
 #   - S3 stays private. Origin Access Control (OAC) lets CloudFront sign
 #     its requests, and the bucket policy only allows reads signed by
 #     THIS distribution.
-#   - The ALB only accepts CloudFront's IP ranges (network.tf).
+#   - The ALB only accepts CloudFront's IP ranges (infra/backend/network.tf).
 #
 # React routing: pages like /success exist only in the browser, not as
 # files in S3. When S3 answers "not found" (403/404), CloudFront returns
 # index.html instead, so refreshing /success still loads the app.
 #
 # Cost: within the free tier for this traffic (1 TB/month out).
+
+# The React build. Private: AWS blocks public access by default.
+resource "aws_s3_bucket" "web" {
+  bucket        = local.web_bucket
+  force_destroy = true # dev only: destroy even if not empty
+}
+
+# The backend's load balancer (infra/backend/app.tf), found by its name.
+data "aws_lb" "backend" {
+  name = local.name
+}
 
 # AWS-managed cache settings, looked up by name.
 data "aws_cloudfront_cache_policy" "optimized" {
@@ -36,7 +48,7 @@ data "aws_cloudfront_origin_request_policy" "all_viewer" {
 }
 
 resource "aws_cloudfront_origin_access_control" "web" {
-  name                              = "${local.name}-web"
+  name                              = "${local.name}-web-oac"
   origin_access_control_origin_type = "s3"
   signing_behavior                  = "always"
   signing_protocol                  = "sigv4"
@@ -57,7 +69,7 @@ resource "aws_cloudfront_distribution" "main" {
   # Origin 2: the backend, through the load balancer (HTTP inside AWS).
   origin {
     origin_id   = "api"
-    domain_name = aws_lb.main.dns_name
+    domain_name = data.aws_lb.backend.dns_name
 
     custom_origin_config {
       http_port              = 80

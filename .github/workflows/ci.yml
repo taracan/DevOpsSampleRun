@@ -16,8 +16,8 @@
 # because "nothing relevant changed" never reports, and the PR would wait
 # forever. Every job is quick, so they always run.
 #
-# This workflow never touches AWS. Deploying is deploy.yml's job, on
-# merges to main.
+# This workflow never touches AWS. Deploying is the job of
+# deploy-backend.yml and deploy-frontend.yml, on merges to main.
 
 name: ci
 

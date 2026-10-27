@@ -1,0 +1,140 @@
+# terraform.yml: builds, updates and tears down one AWS stack, for dev or beta.
+#
+# Two stacks, each with its own state:
+#   backend   infra/backend/   network, ECS, load balancer, database, jobs
+#   frontend  infra/frontend/  S3 web bucket, CloudFront
+#
+# Terraform is never run from a laptop. This workflow runs it:
+#   deploy-backend.yml / deploy-frontend.yml call it first:
+#     pull request  -> plan for dev (a preview, changes nothing)
+#     merge to main -> apply to dev
+#     release.yml   -> apply to beta (waits for your approval)
+#   Run workflow button -> plan, apply or destroy one stack, dev or beta.
+#     Destroy the frontend before the backend (it uses the backend's
+#     load balancer); build the backend first.
+#
+# It signs in with the role smallproject-terraform (variable TF_ROLE_ARN),
+# made once by hand in the IAM console because a workflow can't create the
+# role it signs in with.
+#
+# After an apply it copies the stack's github_vars output into the GitHub
+# environment's variables, which the deploy workflows read. That needs the
+# ADMIN_TOKEN secret: the built-in token can't write variables.
+#
+# Destroy asks you to type the environment's name. Destroying the backend
+# takes a database snapshot (<db>-final-<run id>) first, so the data can be
+# restored later; delete it in the RDS console when you no longer need it.
+
+name: terraform
+
+on:
+  workflow_dispatch:
+    inputs:
+      stack:
+        type: choice
+        options: [backend, frontend]
+      env:
+        type: choice
+        options: [dev, beta]
+      action:
+        type: choice
+        options: [plan, apply, destroy]
+      confirm:
+        description: "For destroy only: type the environment name again"
+        required: false
+  workflow_call:
+    inputs:
+      stack:
+        type: string
+        required: true
+      env:
+        type: string
+        required: true
+      action:
+        description: plan or apply
+        type: string
+        required: true
+      ref:
+        description: Git ref to use (release.yml passes the release branch; empty = the triggering commit)
+        type: string
+        default: ""
+    secrets:
+      ADMIN_TOKEN:
+        required: true
+
+permissions:
+  contents: read
+
+env:
+  STACK: ${{ inputs.stack }}
+  ENV: ${{ inputs.env }}
+  ACTION: ${{ inputs.action }}
+
+jobs:
+  terraform:
+    runs-on: ubuntu-24.04-arm
+    environment: ${{ inputs.env }}
+    # Changes to one stack and environment run one at a time (the state is
+    # locked anyway). Plans don't queue: each gets its own group.
+    concurrency:
+      group: terraform-${{ inputs.stack }}-${{ inputs.env }}-${{ inputs.action == 'plan' && github.run_id || 'change' }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write # lets the job request the OIDC token for AWS
+    defaults:
+      run:
+        working-directory: infra/${{ inputs.stack }}
+    steps:
+      - name: Check the destroy confirmation
+        if: env.ACTION == 'destroy' && inputs.confirm != inputs.env
+        working-directory: .
+        run: |
+          echo "::error::To destroy $ENV, type '$ENV' in the confirm box."
+          exit 1
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false # don't leave the token in .git/config
+
+      - name: Sign in to AWS (OIDC)
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.TF_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: 1.16.5
+          terraform_wrapper: false # plain output, so `terraform output -json` can be parsed
+
+      - run: terraform init -input=false -backend-config="envs/$ENV/state.tfbackend"
+
+      - if: env.ACTION == 'plan'
+        run: terraform plan -input=false -lock-timeout=10m -var-file="envs/$ENV/terraform.tfvars"
+
+      - if: env.ACTION == 'apply'
+        run: terraform apply -input=false -auto-approve -var-file="envs/$ENV/terraform.tfvars"
+
+      - name: Copy outputs into the GitHub environment's variables
+        if: env.ACTION == 'apply'
+        env:
+          GH_TOKEN: ${{ secrets.ADMIN_TOKEN }}
+        run: |
+          terraform output -json github_vars | jq -r 'to_entries[] | "\(.key) \(.value)"' |
+            while read -r name value; do
+              gh variable set "$name" --env "$ENV" --repo "$GITHUB_REPOSITORY" --body "$value"
+            done
+
+      - name: Snapshot the database before destroy
+        if: env.ACTION == 'destroy' && env.STACK == 'backend'
+        run: |
+          db=$(terraform output -json github_vars | jq -r .DB_INSTANCE)
+          snap="$db-final-$GITHUB_RUN_ID"
+          aws rds create-db-snapshot --db-instance-identifier "$db" --db-snapshot-identifier "$snap" > /dev/null
+          aws rds wait db-snapshot-available --db-snapshot-identifier "$snap"
+          echo "Snapshot kept: $snap"
+
+      - if: env.ACTION == 'destroy'
+        run: terraform destroy -input=false -auto-approve -var-file="envs/$ENV/terraform.tfvars"

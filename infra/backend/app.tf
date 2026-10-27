@@ -42,6 +42,17 @@ resource "aws_ecr_repository" "backend" {
   }
 }
 
+# ---------- Third-party API keys ----------
+# One JSON secret per environment, e.g. {"MAPS_API_KEY": "..."}. Terraform
+# creates it empty; the values are typed in the Secrets Manager console, so
+# they never appear in code or in GitHub. To give the app a key, add it to
+# the container's `secrets` list below as "${aws_secretsmanager_secret.app.arn}:MAPS_API_KEY::"
+# once the value exists (ECS can't start a task if the key is missing).
+resource "aws_secretsmanager_secret" "app" {
+  name                    = "${local.name}/app"
+  recovery_window_in_days = 0 # delete at once on destroy, so the name is free for the next apply
+}
+
 # ---------- Logs ----------
 resource "aws_cloudwatch_log_group" "backend" {
   name              = "/ecs/${local.name}-backend"

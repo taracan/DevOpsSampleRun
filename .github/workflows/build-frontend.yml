@@ -1,0 +1,28 @@
+# build-frontend.yml: builds the frontend image whenever frontend/ changes.
+#
+# Build only: the live site is the same React build served from S3 +
+# CloudFront (deploy-frontend.yml). This checks frontend/Dockerfile still
+# builds, for when the site runs as a container.
+
+name: build-frontend
+
+on:
+  pull_request:
+    branches: [main]
+    paths: [frontend/**, .github/workflows/build-frontend.yml]
+  push:
+    branches: [main]
+    paths: [frontend/**, .github/workflows/build-frontend.yml]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false # don't leave the token in .git/config
+
+      - run: docker build -t frontend-check frontend

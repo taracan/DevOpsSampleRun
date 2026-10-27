@@ -1,0 +1,34 @@
+# pr-title.yml: every PR title must start with its Jira ticket number.
+#
+# Example: "SI-12 Supplier sync" (ticket number, space, feature name).
+# The title becomes the squash commit's message on main, and release.yml
+# finds a ticket's change by that prefix, so this is what makes
+# feature-by-feature releases possible. Required check (apply-settings.sh).
+#
+# Runs again when the title is edited. Dependabot's PRs have no ticket and
+# are let through.
+
+name: pr-title
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, edited, synchronize, reopened]
+
+permissions: {}
+
+jobs:
+  pr-title:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - name: Title starts with a ticket number
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+          AUTHOR: ${{ github.event.pull_request.user.login }}
+        run: |
+          if [ "$AUTHOR" = "dependabot[bot]" ] || [[ "$TITLE" =~ ^[A-Z][A-Z0-9]+-[0-9]+\ .+ ]]; then
+            echo "ok: $TITLE"
+          else
+            echo "::error::PR title must start with a Jira ticket number, e.g. 'SI-12 Supplier sync'. Got: $TITLE"
+            exit 1
+          fi

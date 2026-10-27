@@ -4,7 +4,7 @@ The one entry point for database changes, used in three places:
   - your laptop, after `docker compose up -d` (and after pulling new code);
   - the tests (tests/conftest.py), so every test run also runs the
     migrations against a real Postgres;
-  - every backend deploy: .github/workflows/deploy.yml starts the backend
+  - every backend deploy: .github/workflows/deploy-backend.yml starts the backend
     image as a one-off ECS task with this command, BEFORE the new version
     goes live. If it fails, the deploy stops and the old version keeps
     running.
