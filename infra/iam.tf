@@ -14,7 +14,9 @@
 #   github         GitHub Actions deploy workflow (step 10), main
 #                  branch only: push image, run the database migrations
 #                  as a one-off ECS task (Phase B step 8), redeploy ECS,
-#                  upload the website, clear the CloudFront cache
+#                  upload the website, clear the CloudFront cache;
+#                  snapshot the database and run the restore drill
+#                  (Phase B step 9)
 #   ec2            the EC2 admin host (step 9): SSM Session Manager only
 #   sfn            Step Functions (step 9): run the nightly report task;
 #                  Phase B step 7: restart the backend service
@@ -199,6 +201,55 @@ resource "aws_iam_role_policy" "github" {
         # "<log group ARN>:*" is the form IAM matches for GetLogEvents
         # (checked with aws iam simulate-custom-policy; ":log-stream:*" was denied).
         Resource = "${aws_cloudwatch_log_group.backend.arn}:*"
+      },
+      # Phase B step 9: database snapshots before migrations (deploy.yml)
+      # and the monthly restore drill (restore-drill.yml). Production can be
+      # snapshotted and read, never deleted or overwritten: delete/restore
+      # only work on the drill copy and on smallproject-* snapshots.
+      {
+        Sid    = "RdsSnapshotCreate" # snapshot production
+        Effect = "Allow"
+        Action = "rds:CreateDBSnapshot"
+        Resource = [
+          "arn:aws:rds:${local.region}:${local.account}:db:${local.name}",
+          "arn:aws:rds:${local.region}:${local.account}:snapshot:${local.name}-*",
+        ]
+      },
+      {
+        Sid    = "RdsDescribe" # wait for snapshots and the drill copy, read settings
+        Effect = "Allow"
+        Action = ["rds:DescribeDBSnapshots", "rds:DescribeDBInstances"]
+        Resource = [
+          "arn:aws:rds:${local.region}:${local.account}:db:${local.name}*",
+          "arn:aws:rds:${local.region}:${local.account}:snapshot:${local.name}-*",
+        ]
+      },
+      {
+        Sid    = "RdsSnapshotDelete" # keep 3 pre-deploy snapshots; remove drill snapshots
+        Effect = "Allow"
+        Action = "rds:DeleteDBSnapshot"
+        Resource = [
+          "arn:aws:rds:${local.region}:${local.account}:snapshot:${local.name}-predeploy-*",
+          "arn:aws:rds:${local.region}:${local.account}:snapshot:${local.name}-drill-*",
+        ]
+      },
+      {
+        Sid    = "RdsDrillRestore" # restore a drill snapshot to the drill copy only
+        Effect = "Allow"
+        Action = ["rds:RestoreDBInstanceFromDBSnapshot", "rds:AddTagsToResource"]
+        Resource = [
+          "arn:aws:rds:${local.region}:${local.account}:db:${local.name}-drill",
+          "arn:aws:rds:${local.region}:${local.account}:snapshot:${local.name}-drill-*",
+          "arn:aws:rds:${local.region}:${local.account}:subgrp:${aws_db_subnet_group.main.name}",
+          "arn:aws:rds:${local.region}:${local.account}:og:*",
+          "arn:aws:rds:${local.region}:${local.account}:pg:*",
+        ]
+      },
+      {
+        Sid      = "RdsDrillDelete" # delete the drill copy, never production
+        Effect   = "Allow"
+        Action   = "rds:DeleteDBInstance"
+        Resource = "arn:aws:rds:${local.region}:${local.account}:db:${local.name}-drill"
       },
     ]
   })

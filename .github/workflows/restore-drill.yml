@@ -1,0 +1,143 @@
+# restore-drill.yml: proves the database can really be restored from a backup.
+#
+# A backup you've never restored is only a hope. Once a month (1st, 04:00
+# UTC), or when you press "Run workflow" in the Actions tab, this:
+#
+#   1. takes a fresh snapshot of production: smallproject-drill-<run id>
+#   2. restores it to a TEMPORARY database, smallproject-drill (same size,
+#      same private subnets and security group, not public)
+#   3. runs a one-off ECS task with the backend image pointed at that copy:
+#      `python -m app.db.check`, which reads the Alembic revision and counts
+#      the users, and fails if the copy is unreadable, out of date or empty
+#   4. ALWAYS deletes the temporary database and the drill snapshot, even
+#      if a step failed, so nothing is left running (and costing money)
+#   5. writes the timings to the run's summary. "Snapshot + restore" is
+#      roughly how long a real recovery from backup would take.
+#
+# Production is only read (snapshot), never changed. Taking a fresh snapshot
+# (instead of using an old one) means the copy has the CURRENT database
+# password, which is the one the ECS task already reads.
+#
+# Sign-in: the same GitHub OIDC role as deploy.yml (main branch only).
+# Runtime: about 20-30 minutes, mostly AWS creating and deleting the copy.
+
+name: restore-drill
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 4 1 * *" # 04:00 UTC on the 1st of every month
+
+concurrency:
+  group: restore-drill
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+  AWS_ROLE_ARN: arn:aws:iam::631571737116:role/smallproject-github-actions
+  DB_INSTANCE: smallproject
+  DRILL_INSTANCE: smallproject-drill
+  ECS_CLUSTER: smallproject
+  ECS_SERVICE: smallproject-backend
+
+jobs:
+  drill:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      id-token: write # lets the job request the OIDC token for AWS
+    steps:
+      - name: Sign in to AWS (OIDC)
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Take a fresh snapshot of production
+        id: snapshot
+        run: |
+          snap="smallproject-drill-${GITHUB_RUN_ID}"
+          echo "name=$snap" >> "$GITHUB_OUTPUT"
+          start=$(date +%s)
+          aws rds create-db-snapshot --db-instance-identifier "$DB_INSTANCE" --db-snapshot-identifier "$snap" > /dev/null
+          aws rds wait db-snapshot-available --db-snapshot-identifier "$snap"
+          echo "seconds=$(( $(date +%s) - start ))" >> "$GITHUB_OUTPUT"
+          echo "Snapshot ready: $snap"
+
+      - name: Restore it to a temporary database
+        id: restore
+        run: |
+          src=$(aws rds describe-db-instances --db-instance-identifier "$DB_INSTANCE" --query 'DBInstances[0]')
+          start=$(date +%s)
+          aws rds restore-db-instance-from-db-snapshot \
+            --db-instance-identifier "$DRILL_INSTANCE" \
+            --db-snapshot-identifier "${{ steps.snapshot.outputs.name }}" \
+            --db-instance-class "$(echo "$src" | jq -r .DBInstanceClass)" \
+            --db-subnet-group-name "$(echo "$src" | jq -r .DBSubnetGroup.DBSubnetGroupName)" \
+            --vpc-security-group-ids $(echo "$src" | jq -r '.VpcSecurityGroups[].VpcSecurityGroupId') \
+            --no-publicly-accessible --no-multi-az --no-deletion-protection > /dev/null
+          aws rds wait db-instance-available --db-instance-identifier "$DRILL_INSTANCE"
+          echo "seconds=$(( $(date +%s) - start ))" >> "$GITHUB_OUTPUT"
+          host=$(aws rds describe-db-instances --db-instance-identifier "$DRILL_INSTANCE" --query 'DBInstances[0].Endpoint.Address' --output text)
+          echo "host=$host" >> "$GITHUB_OUTPUT"
+          echo "Temporary database ready: $host"
+
+      # Same pattern as the migration step in deploy.yml: a one-off task with
+      # the service's task definition and network, here with DB_HOST pointed
+      # at the restored copy and the check command.
+      - name: Check the restored data (one-off ECS task)
+        run: |
+          svc=$(aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" --query 'services[0]')
+          overrides=$(jq -nc --arg host "${{ steps.restore.outputs.host }}" \
+            '{containerOverrides:[{name:"backend",command:["python","-m","app.db.check"],environment:[{name:"DB_HOST",value:$host}]}]}')
+          task=$(aws ecs run-task --cluster "$ECS_CLUSTER" --launch-type FARGATE \
+            --task-definition "$(echo "$svc" | jq -r .taskDefinition)" \
+            --network-configuration "$(echo "$svc" | jq -c .networkConfiguration)" \
+            --overrides "$overrides" \
+            --started-by "drill-${GITHUB_RUN_ID}" \
+            --query 'tasks[0].taskArn' --output text)
+          echo "Check task: $task"
+          aws ecs wait tasks-stopped --cluster "$ECS_CLUSTER" --tasks "$task"
+          result=$(aws ecs describe-tasks --cluster "$ECS_CLUSTER" --tasks "$task" \
+            --query 'tasks[0].[containers[0].exitCode, stoppedReason]' --output text)
+          echo "--- check log ---"
+          aws logs get-log-events --log-group-name /ecs/smallproject-backend \
+            --log-stream-name "backend/backend/${task##*/}" --start-from-head \
+            --query 'events[].message' --output text | tr '\t' '\n' | tee check.log || true
+          echo "--- exit code and reason: $result"
+          [ "$(echo "$result" | cut -f1)" = "0" ] || { echo "::error::Restore drill check failed: $result"; exit 1; }
+
+      - name: Clean up (always)
+        if: always()
+        run: |
+          if aws rds describe-db-instances --db-instance-identifier "$DRILL_INSTANCE" > /dev/null 2>&1; then
+            aws rds delete-db-instance --db-instance-identifier "$DRILL_INSTANCE" \
+              --skip-final-snapshot --delete-automated-backups > /dev/null
+            aws rds wait db-instance-deleted --db-instance-identifier "$DRILL_INSTANCE"
+            echo "Temporary database deleted."
+          fi
+          snap="${{ steps.snapshot.outputs.name }}"
+          if [ -n "$snap" ] && aws rds describe-db-snapshots --db-snapshot-identifier "$snap" > /dev/null 2>&1; then
+            aws rds delete-db-snapshot --db-snapshot-identifier "$snap" > /dev/null
+            echo "Drill snapshot deleted: $snap"
+          fi
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "## Restore drill"
+            echo "| Step | Time |"
+            echo "|---|---|"
+            echo "| Snapshot of production | ${{ steps.snapshot.outputs.seconds || '-' }} s |"
+            echo "| Restore to a temporary database | ${{ steps.restore.outputs.seconds || '-' }} s |"
+            echo ""
+            echo "Check output:"
+            echo '```'
+            cat check.log 2>/dev/null || echo "(no check output)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
