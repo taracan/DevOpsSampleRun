@@ -6,6 +6,13 @@ import { PATHS } from "../../routes/paths";
 
 const INITIAL_FORM = { name: "", email: "", password: "" };
 
+// Letters after the heading: one file per letter in ./letters, each added by
+// its own ticket so a release can pick any of them. Shown in file-name order.
+const LETTERS = Object.entries(import.meta.glob("./letters/*.js", { eager: true, import: "default" }))
+  .sort()
+  .map(([, letter]) => letter)
+  .join("");
+
 export default function RegisterPage() {
   const [form, setForm] = useState(INITIAL_FORM);
   const [error, setError] = useState("");
@@ -30,7 +37,7 @@ export default function RegisterPage() {
 
   return (
     <div className="card">
-      <h1>Create your SmallProjectReleasemanagement account</h1>
+      <h1>Create your SmallProjectReleasemanagement account {LETTERS}</h1>
       <form onSubmit={handleSubmit}>
         <FormInput label="Name" name="name" value={form.name} onChange={handleChange} required />
         <FormInput label="Email" name="email" type="email" value={form.email} onChange={handleChange} required />
