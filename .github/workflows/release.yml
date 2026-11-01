@@ -14,6 +14,10 @@
 #   3. frontend  deploy-frontend.yml applies infra/frontend/ to beta, then
 #                ships the website (after the backend: it uses the backend's
 #                load balancer)
+# Steps 2 and 3 run only for the parts this release changes compared with
+# the previous tag (folders below, plus that part's workflows). A change to
+# infra/backend/ also re-runs the frontend, which reads the load balancer's
+# address. The first release (no tag yet) runs both.
 # Each Terraform and deploy job waits for your approval (GitHub environment "beta").
 #
 # When beta looks good, publish tag v1.3 on the release branch from the
@@ -46,6 +50,8 @@ jobs:
     runs-on: ubuntu-24.04-arm
     outputs:
       branch: ${{ steps.cut.outputs.branch }}
+      backend: ${{ steps.cut.outputs.backend }}
+      frontend: ${{ steps.cut.outputs.frontend }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -97,8 +103,19 @@ jobs:
           git push origin "HEAD:refs/heads/$branch"
           echo "branch=$branch" >> "$GITHUB_OUTPUT"
 
+          # Which parts does this release change? (true = deploy it)
+          changed() { [ -z "$base" ] || ! git diff --quiet "$base" HEAD -- "$@"; }
+          backend=false frontend=false
+          changed backend infra/backend .github/workflows/deploy-backend.yml .github/workflows/terraform.yml && backend=true
+          changed frontend infra/frontend infra/backend .github/workflows/deploy-frontend.yml .github/workflows/terraform.yml && frontend=true
+          echo "Deploy backend: $backend, frontend: $frontend"
+          [ "$backend$frontend" != falsefalse ] || echo "::notice::Nothing to deploy: this release changes neither part."
+          echo "backend=$backend" >> "$GITHUB_OUTPUT"
+          echo "frontend=$frontend" >> "$GITHUB_OUTPUT"
+
   backend:
     needs: cut
+    if: needs.cut.outputs.backend == 'true'
     permissions:
       contents: read
       id-token: write
@@ -111,6 +128,8 @@ jobs:
 
   frontend:
     needs: [cut, backend]
+    # Also when the backend was skipped, but not when it failed.
+    if: ${{ !cancelled() && needs.cut.outputs.frontend == 'true' && needs.backend.result != 'failure' }}
     permissions:
       contents: read
       id-token: write
