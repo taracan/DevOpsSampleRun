@@ -9,7 +9,7 @@
 # Everything
 *           @taracan
 
-# Infrastructure (Terraform): changes reach AWS when applied from a laptop
+# Infrastructure (Terraform): changes reach AWS when terraform.yml applies them
 /infra/     @taracan
 
 # CI/CD workflows and repo settings: control deploys and the merge gate

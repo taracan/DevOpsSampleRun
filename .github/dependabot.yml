@@ -20,9 +20,9 @@
 #   pip             backend/requirements.txt
 #   npm             frontend/package.json + package-lock.json
 #   github-actions  the actions used in .github/workflows (keeps SHA pins fresh)
-#   docker          the base image in backend/Dockerfile
+#   docker          the base images in the backend/, frontend/, scraper/ and ai/ Dockerfiles
 #   docker-compose  the local Postgres image in docker-compose.yml
-#   terraform       the provider versions in infra/
+#   terraform       the provider versions in infra/backend/ and infra/frontend/
 
 version: 2
 updates:
@@ -61,7 +61,7 @@ updates:
         patterns: ["*"]
 
   - package-ecosystem: docker
-    directory: /backend
+    directories: [/backend, /frontend, /scraper, /ai]
     schedule:
       interval: monthly
     ignore:
@@ -89,7 +89,7 @@ updates:
         patterns: ["*"]
 
   - package-ecosystem: terraform
-    directory: /infra
+    directories: [/infra/backend, /infra/frontend]
     schedule:
       interval: monthly
     groups:

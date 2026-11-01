@@ -1,11 +1,8 @@
 # outputs.tf: values Terraform prints after `apply`.
 #
-# Outputs are the useful IDs of what was created. See them any time
-# with:
-#   terraform -chdir=infra output
-# Later steps add more here (e.g. the CloudFront URL), and step 10 copies
-# some of them into GitHub as repository variables for the deploy
-# workflow.
+# Outputs are the useful IDs of what was created; terraform.yml prints
+# them after each apply. The website's outputs (site URL, CloudFront ID)
+# are in infra/frontend/outputs.tf.
 
 output "vpc_id" {
   value = aws_vpc.main.id
@@ -55,7 +52,6 @@ output "db_secret_arn" {
 
 output "buckets" {
   value = {
-    web     = aws_s3_bucket.web.bucket
     reports = aws_s3_bucket.reports.bucket
   }
 }
@@ -77,16 +73,6 @@ output "ecs" {
   }
 }
 
-output "site_url" {
-  description = "The public website address."
-  value       = "https://${aws_cloudfront_distribution.main.domain_name}"
-}
-
-output "cloudfront_distribution_id" {
-  description = "Step 10: used by the deploy workflow to clear the cache."
-  value       = aws_cloudfront_distribution.main.id
-}
-
 output "admin_instance_id" {
   description = "EC2 admin host; connect with Session Manager."
   value       = aws_instance.admin.id
@@ -94,4 +80,20 @@ output "admin_instance_id" {
 
 output "report_state_machine_arn" {
   value = aws_sfn_state_machine.report.arn
+}
+
+# terraform.yml copies these into the GitHub environment (dev or beta) as
+# variables, which the deploy workflows read as vars.<NAME>. Nothing is
+# copied by hand, and a rebuilt environment stays in sync. The frontend
+# stack adds its own (WEB_BUCKET, SITE_URL, ...).
+output "github_vars" {
+  value = {
+    AWS_REGION     = local.region
+    AWS_ROLE_ARN   = aws_iam_role.github.arn
+    ECR_REPOSITORY = aws_ecr_repository.backend.repository_url
+    ECS_CLUSTER    = aws_ecs_cluster.main.name
+    ECS_SERVICE    = aws_ecs_service.backend.name
+    LOG_GROUP      = aws_cloudwatch_log_group.backend.name
+    DB_INSTANCE    = aws_db_instance.main.identifier
+  }
 }

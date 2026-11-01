@@ -1,0 +1,217 @@
+# deploy-backend.yml: ships the backend (FastAPI on ECS) to dev or beta.
+#
+# When it runs (changes in backend/ or infra/backend/):
+#   pull request                             -> Terraform plan only
+#   merge to main                            -> dev
+#   release.yml                              -> beta (waits for your approval)
+#   Run workflow button                      -> dev or beta; with "sha" set,
+#                                               it is the undo button (below)
+#
+# Job "infra" first applies the backend's AWS stack (terraform.yml, stack
+# backend), then job "deploy" ships the code:
+#   1. signs in to AWS through OIDC with the environment's deploy role
+#      (vars.AWS_ROLE_ARN). The role trusts only jobs in that GitHub
+#      environment, so a dev job can't touch beta and the other way round.
+#   2. builds the backend image and pushes it to ECR as :latest plus the
+#      commit SHA, so each version is traceable and can be put back
+#   3. if migrations changed: snapshots the database first (keeps the
+#      newest 3 pre-deploy snapshots), then runs the Alembic migrations as a
+#      one-off ECS task with the new image (RDS isn't reachable from
+#      GitHub's runners). If they fail, the deploy stops and the old
+#      version keeps running.
+#   4. restarts the ECS service and waits until it is stable (a failed
+#      rollout rolls back automatically: ECS circuit breaker, infra/backend/app.tf)
+#   5. smoke test: /api/v1/ready through CloudFront must say the database is
+#      ok (skipped while the environment has no website yet: the very first
+#      beta release builds the backend before the frontend)
+#
+# Undo: Run workflow with env and the full commit SHA of a version that
+# worked. It skips Terraform, the build and the migrations, points :latest at that
+# image again and restarts ECS. Database migrations are NOT undone; if a
+# migration broke the data, restore the pre-deploy snapshot instead.
+#
+# The account details (vars.*) are set on each GitHub environment by
+# terraform.yml from the Terraform outputs, so job "deploy" sees the values
+# job "infra" just wrote.
+
+name: deploy-backend
+
+on:
+  pull_request:
+    branches: [main]
+    paths: [backend/**, infra/backend/**, .github/workflows/deploy-backend.yml, .github/workflows/terraform.yml]
+  push:
+    branches: [main]
+    paths: [backend/**, infra/backend/**, .github/workflows/deploy-backend.yml, .github/workflows/terraform.yml]
+  workflow_dispatch:
+    inputs:
+      env:
+        type: choice
+        options: [dev, beta]
+      sha:
+        description: "Undo: full commit SHA of an earlier version to put back (empty = build this branch)"
+        required: false
+  workflow_call:
+    inputs:
+      env:
+        type: string
+        required: true
+      ref:
+        description: Git ref to deploy (release.yml passes the release branch)
+        type: string
+        required: true
+    secrets:
+      ADMIN_TOKEN:
+        required: true
+
+permissions:
+  contents: read
+
+# Never run two deploys of one environment at once; a newer one waits.
+# Pull requests (plan only) don't queue behind deploys.
+concurrency:
+  group: deploy-backend-${{ inputs.env || 'dev' }}-${{ github.event_name == 'pull_request' && github.run_id || 'deploy' }}
+  cancel-in-progress: false
+
+jobs:
+  infra:
+    if: inputs.sha == ''
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/terraform.yml
+    with:
+      stack: backend
+      env: ${{ inputs.env || 'dev' }}
+      action: ${{ github.event_name == 'pull_request' && 'plan' || 'apply' }}
+      ref: ${{ inputs.ref }}
+    secrets:
+      ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}
+
+  deploy:
+    needs: infra
+    # After a successful apply, or with infra skipped for an undo.
+    if: ${{ !cancelled() && github.event_name != 'pull_request' && needs.infra.result != 'failure' }}
+    runs-on: ubuntu-24.04-arm # ARM, to match the Fargate ARM64 tasks
+    environment: ${{ inputs.env || 'dev' }}
+    permissions:
+      contents: read
+      id-token: write # lets the job request the OIDC token for AWS
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+      ECS_CLUSTER: ${{ vars.ECS_CLUSTER }}
+      ECS_SERVICE: ${{ vars.ECS_SERVICE }}
+      LOG_GROUP: ${{ vars.LOG_GROUP }}
+      DB_INSTANCE: ${{ vars.DB_INSTANCE }}
+      SITE_URL: ${{ vars.SITE_URL }}
+      UNDO_SHA: ${{ inputs.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0 # full history, to compare with the previous main
+          persist-credentials: false # don't leave the token in .git/config
+
+      # New or changed migrations? Then snapshot the database first. Only a
+      # merge to main knows the previous commit; any other run (release,
+      # button) can't tell, so it snapshots to be safe.
+      - name: Check for migration changes
+        id: changes
+        run: |
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          if [ "$GITHUB_EVENT_NAME" = push ] && git diff --quiet "${{ github.event.before }}" HEAD -- backend/migrations; then
+            echo "migrations=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "migrations=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Sign in to AWS (OIDC)
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Undo - point :latest at the chosen version
+        if: env.UNDO_SHA != ''
+        run: |
+          repo="${ECR_REPOSITORY#*/}"
+          image=$(aws ecr batch-get-image --repository-name "$repo" --image-ids imageTag="$UNDO_SHA" \
+            --query 'images[0].[imageManifest,imageManifestMediaType]' --output json)
+          [ "$(echo "$image" | jq -r '.[0]')" != null ] || { echo "::error::No image tagged $UNDO_SHA in $repo"; exit 1; }
+          # Fails with ImageAlreadyExistsException when :latest is already that image: fine.
+          out=$(aws ecr put-image --repository-name "$repo" --image-tag latest \
+            --image-manifest "$(echo "$image" | jq -r '.[0]')" \
+            --image-manifest-media-type "$(echo "$image" | jq -r '.[1]')" 2>&1) ||
+            grep -q ImageAlreadyExistsException <<< "$out" || { echo "$out"; exit 1; }
+          echo "Putting back $UNDO_SHA"
+
+      - name: Sign in to ECR
+        if: env.UNDO_SHA == ''
+        uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2.1.7
+
+      - name: Build and push backend image
+        if: env.UNDO_SHA == ''
+        run: |
+          docker build -t "$ECR_REPOSITORY:latest" -t "$ECR_REPOSITORY:${{ steps.changes.outputs.sha }}" backend
+          docker push --all-tags "$ECR_REPOSITORY"
+
+      # Safety net for schema changes: snapshot BEFORE the migrations run and
+      # keep only the newest 3 of these snapshots. The restore drill
+      # (restore-drill.yml) checks that restoring works.
+      - name: Snapshot the database before migrations
+        if: env.UNDO_SHA == '' && steps.changes.outputs.migrations == 'true'
+        run: |
+          sha="${{ steps.changes.outputs.sha }}"
+          snap="$DB_INSTANCE-predeploy-${sha::7}"
+          if ! aws rds describe-db-snapshots --db-snapshot-identifier "$snap" > /dev/null 2>&1; then
+            aws rds create-db-snapshot --db-instance-identifier "$DB_INSTANCE" --db-snapshot-identifier "$snap" > /dev/null
+          fi
+          aws rds wait db-snapshot-available --db-snapshot-identifier "$snap"
+          echo "Snapshot ready: $snap"
+          old=$(aws rds describe-db-snapshots --db-instance-identifier "$DB_INSTANCE" --snapshot-type manual \
+            --query "sort_by(DBSnapshots[?starts_with(DBSnapshotIdentifier, '$DB_INSTANCE-predeploy-')], &SnapshotCreateTime)[:-3].DBSnapshotIdentifier" \
+            --output text)
+          for o in $old; do
+            echo "Deleting old pre-deploy snapshot: $o"
+            aws rds delete-db-snapshot --db-snapshot-identifier "$o" > /dev/null
+          done
+
+      # One-off ECS task: same task definition as the service (its :latest
+      # image is the one just pushed), same private subnets and security
+      # group, command replaced by the migration entry point. Waits for it
+      # to stop, prints its log, and fails the deploy unless it exited 0.
+      - name: Run database migrations (one-off ECS task)
+        if: env.UNDO_SHA == ''
+        run: |
+          sha="${{ steps.changes.outputs.sha }}"
+          svc=$(aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" --query 'services[0]')
+          task=$(aws ecs run-task --cluster "$ECS_CLUSTER" --launch-type FARGATE \
+            --task-definition "$(echo "$svc" | jq -r .taskDefinition)" \
+            --network-configuration "$(echo "$svc" | jq -c .networkConfiguration)" \
+            --overrides '{"containerOverrides":[{"name":"backend","command":["python","-m","app.db.migrate"]}]}' \
+            --started-by "migrate-${sha::7}" \
+            --query 'tasks[0].taskArn' --output text)
+          echo "Migration task: $task"
+          aws ecs wait tasks-stopped --cluster "$ECS_CLUSTER" --tasks "$task"
+          result=$(aws ecs describe-tasks --cluster "$ECS_CLUSTER" --tasks "$task" \
+            --query 'tasks[0].[containers[0].exitCode, stoppedReason]' --output text)
+          echo "--- migration log ---"
+          aws logs get-log-events --log-group-name "$LOG_GROUP" \
+            --log-stream-name "backend/backend/${task##*/}" --start-from-head \
+            --query 'events[].message' --output text | tr '\t' '\n' || true
+          echo "--- exit code and reason: $result"
+          [ "$(echo "$result" | cut -f1)" = "0" ] || { echo "::error::Database migrations failed: $result"; exit 1; }
+
+      - name: Deploy to ECS and wait until stable
+        run: |
+          aws ecs update-service --cluster "$ECS_CLUSTER" --service "$ECS_SERVICE" --force-new-deployment > /dev/null
+          aws ecs wait services-stable --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE"
+
+      # Readiness, not just liveness: the answer must say the database is ok.
+      - name: Smoke test (readiness)
+        run: |
+          [ -n "$SITE_URL" ] || { echo "::notice::No website in this environment yet: skipped (deploy-frontend tests it)."; exit 0; }
+          body=$(curl -fsS "$SITE_URL/api/v1/ready")
+          echo "$body"
+          echo "$body" | grep -q '"db":"ok"'

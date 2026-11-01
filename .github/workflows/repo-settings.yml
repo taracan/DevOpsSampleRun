@@ -1,0 +1,33 @@
+# repo-settings.yml: applies the GitHub repo settings kept as code.
+#
+# Actions -> repo-settings -> Run workflow. Runs
+# .github/settings/apply-settings.sh (merge buttons, rulesets, security
+# features, the dev and beta environments). Safe to run any number of
+# times. Uses the ADMIN_TOKEN secret: the built-in token can't change
+# repository settings.
+
+name: repo-settings
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Only print what would be sent
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  apply:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false # don't leave the token in .git/config
+
+      - run: .github/settings/apply-settings.sh
+        env:
+          GH_TOKEN: ${{ secrets.ADMIN_TOKEN }}
+          DRY_RUN: ${{ inputs.dry_run && '1' || '0' }}

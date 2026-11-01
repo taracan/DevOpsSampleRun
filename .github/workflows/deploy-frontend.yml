@@ -1,0 +1,115 @@
+# deploy-frontend.yml: ships the website (React build on S3 + CloudFront) to dev or beta.
+#
+# When it runs (changes in frontend/ or infra/frontend/):
+#   pull request         -> Terraform plan only
+#   merge to main        -> dev
+#   release.yml          -> beta (after deploy-backend; waits for your approval)
+#   Run workflow button  -> dev or beta
+#
+# Job "infra" first applies the website's AWS stack (terraform.yml, stack
+# frontend: S3 bucket + CloudFront). Job "deploy" then signs in with the
+# website's own deploy role (vars.FRONTEND_ROLE_ARN, infra/frontend/iam.tf),
+# builds the React app, uploads it to the web bucket, clears the CloudFront
+# cache and waits until that has finished everywhere, then checks that the
+# page loads and the API answers through CloudFront.
+#
+# To undo a website change, merge a revert PR (or redeploy an older
+# release branch with release.yml); the site is rebuilt from source.
+
+name: deploy-frontend
+
+on:
+  pull_request:
+    branches: [main]
+    paths: [frontend/**, infra/frontend/**, .github/workflows/deploy-frontend.yml, .github/workflows/terraform.yml]
+  push:
+    branches: [main]
+    paths: [frontend/**, infra/frontend/**, .github/workflows/deploy-frontend.yml, .github/workflows/terraform.yml]
+  workflow_dispatch:
+    inputs:
+      env:
+        type: choice
+        options: [dev, beta]
+  workflow_call:
+    inputs:
+      env:
+        type: string
+        required: true
+      ref:
+        description: Git ref to deploy (release.yml passes the release branch)
+        type: string
+        required: true
+    secrets:
+      ADMIN_TOKEN:
+        required: true
+
+permissions:
+  contents: read
+
+# Pull requests (plan only) don't queue behind deploys.
+concurrency:
+  group: deploy-frontend-${{ inputs.env || 'dev' }}-${{ github.event_name == 'pull_request' && github.run_id || 'deploy' }}
+  cancel-in-progress: false
+
+jobs:
+  infra:
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/terraform.yml
+    with:
+      stack: frontend
+      env: ${{ inputs.env || 'dev' }}
+      action: ${{ github.event_name == 'pull_request' && 'plan' || 'apply' }}
+      ref: ${{ inputs.ref }}
+    secrets:
+      ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}
+
+  deploy:
+    needs: infra
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04-arm
+    environment: ${{ inputs.env || 'dev' }}
+    permissions:
+      contents: read
+      id-token: write # lets the job request the OIDC token for AWS
+    env:
+      WEB_BUCKET: ${{ vars.WEB_BUCKET }}
+      CLOUDFRONT_DISTRIBUTION_ID: ${{ vars.CLOUDFRONT_DISTRIBUTION_ID }}
+      SITE_URL: ${{ vars.SITE_URL }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false # don't leave the token in .git/config
+
+      - name: Sign in to AWS (OIDC)
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.FRONTEND_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Build and upload
+        working-directory: frontend
+        env:
+          VITE_API_BASE_URL: /api/v1 # same address as the page, via CloudFront
+        run: |
+          npm ci
+          npm run build
+          aws s3 sync dist "s3://$WEB_BUCKET" --delete
+
+      - name: Clear CloudFront cache and wait
+        run: |
+          id=$(aws cloudfront create-invalidation --distribution-id "$CLOUDFRONT_DISTRIBUTION_ID" --paths "/*" --query Invalidation.Id --output text)
+          aws cloudfront wait invalidation-completed --distribution-id "$CLOUDFRONT_DISTRIBUTION_ID" --id "$id"
+
+      - name: Smoke test (page loads, API answers through CloudFront)
+        run: |
+          curl -fsS -o /dev/null "$SITE_URL/"
+          curl -fsS "$SITE_URL/api/v1/ready"

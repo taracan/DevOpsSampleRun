@@ -11,10 +11,10 @@
 #                  from ECR, write logs, read the DB password from
 #                  Secrets Manager
 #   ecs_task       the code inside the container: write reports to S3
-#   github         GitHub Actions deploy workflow (step 10), main
-#                  branch only: push image, run the database migrations
-#                  as a one-off ECS task (Phase B step 8), redeploy ECS,
-#                  upload the website, clear the CloudFront cache;
+#   github         GitHub Actions deploy workflows, one role per
+#                  environment, trusted only for that GitHub environment
+#                  (dev also for main, used by restore-drill.yml): push image, run the database migrations
+#                  as a one-off ECS task (Phase B step 8), redeploy ECS;
 #                  snapshot the database and run the restore drill
 #                  (Phase B step 9)
 #   ec2            the EC2 admin host (step 9): SSM Session Manager only
@@ -26,7 +26,8 @@
 #
 # Secrets Manager: the DB password secret is created and rotated by RDS
 # itself (manage_master_user_password, data.tf), so it never appears in
-# code. The execution role may read exactly that one secret.
+# code. The execution role may read exactly that secret and the app's
+# API-key secret (app.tf).
 
 # Reused trust policy: "ECS tasks in this account may use this role".
 data "aws_iam_policy_document" "ecs_tasks_trust" {
@@ -56,7 +57,8 @@ resource "aws_iam_role_policy_attachment" "ecs_execution" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
 }
 
-# Read the DB password so ECS can pass it to the container as DB_PASSWORD.
+# Read the DB password and the third-party API keys (app.tf), so ECS can
+# pass them to the container as environment variables.
 resource "aws_iam_role_policy" "ecs_execution_secret" {
   name = "read-db-secret"
   role = aws_iam_role.ecs_execution.id
@@ -65,7 +67,7 @@ resource "aws_iam_role_policy" "ecs_execution_secret" {
     Statement = [{
       Effect   = "Allow"
       Action   = "secretsmanager:GetSecretValue"
-      Resource = aws_db_instance.main.master_user_secret[0].secret_arn
+      Resource = [aws_db_instance.main.master_user_secret[0].secret_arn, aws_secretsmanager_secret.app.arn]
     }]
   })
 }
@@ -94,28 +96,47 @@ resource "aws_iam_role_policy" "ecs_task" {
 # ---------- GitHub Actions (OIDC) ----------
 # OIDC: GitHub gives each workflow run a signed token, and AWS trusts
 # tokens from GitHub's issuer. So no AWS keys are stored in GitHub.
-resource "aws_iam_openid_connect_provider" "github" {
-  url            = "https://token.actions.githubusercontent.com"
-  client_id_list = ["sts.amazonaws.com"]
+#
+# The identity provider exists once per AWS account, and dev and beta share
+# the account. It is no longer managed here: destroying dev must not delete
+# it, because the Terraform role (made by hand in the IAM console) also
+# signs in through it. `removed` takes it out of dev's state and keeps it.
+removed {
+  from = aws_iam_openid_connect_provider.github
+  lifecycle {
+    destroy = false
+  }
+}
+
+locals {
+  github_oidc_arn = "arn:aws:iam::${local.account}:oidc-provider/token.actions.githubusercontent.com"
+
+  # GitHub puts immutable IDs in the token subject (owner@<owner id>/repo@<repo id>),
+  # so a renamed or re-created repo with the same name can't match.
+  # See: gh api repos/taracan/DevOpsSampleRun/actions/oidc/customization/sub
+  github_sub = "repo:taracan@47918634/DevOpsSampleRun@1410627250"
+
+  # Jobs that run in this GitHub environment (dev or beta). Dev also keeps
+  # trusting main without an environment, for restore-drill.yml.
+  github_subjects = concat(
+    ["${local.github_sub}:environment:${var.env}"],
+    var.env == "dev" ? ["${local.github_sub}:ref:refs/heads/main"] : [],
+  )
 }
 
 resource "aws_iam_role" "github" {
   name = "${local.name}-github-actions"
 
-  # Only workflows running on the main branch of this repo. GitHub puts
-  # immutable IDs in the token subject (owner@<owner id>/repo@<repo id>),
-  # so a renamed or re-created repo with the same name can't match.
-  # See: gh api repos/taracan/DevOpsSampleRun/actions/oidc/customization/sub
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
       Effect    = "Allow"
       Action    = "sts:AssumeRoleWithWebIdentity"
-      Principal = { Federated = aws_iam_openid_connect_provider.github.arn }
+      Principal = { Federated = local.github_oidc_arn }
       Condition = {
         StringEquals = {
           "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
-          "token.actions.githubusercontent.com:sub" = "repo:taracan@47918634/DevOpsSampleRun@1410627250:ref:refs/heads/main"
+          "token.actions.githubusercontent.com:sub" = local.github_subjects
         }
       }
     }]
@@ -153,26 +174,8 @@ resource "aws_iam_role_policy" "github" {
         Action   = ["ecs:UpdateService", "ecs:DescribeServices"]
         Resource = "arn:aws:ecs:${local.region}:${local.account}:service/${local.cluster}/${local.service}"
       },
-      {
-        Sid      = "WebsiteList"
-        Effect   = "Allow"
-        Action   = "s3:ListBucket"
-        Resource = "arn:aws:s3:::${local.web_bucket}"
-      },
-      {
-        Sid      = "WebsiteUpload" # aws s3 sync --delete
-        Effect   = "Allow"
-        Action   = ["s3:PutObject", "s3:DeleteObject"]
-        Resource = "arn:aws:s3:::${local.web_bucket}/*"
-      },
-      {
-        Sid      = "CacheClear" # only this site's distribution (cdn.tf)
-        Effect   = "Allow"
-        Action   = ["cloudfront:CreateInvalidation", "cloudfront:GetInvalidation"] # Get: wait until done
-        Resource = aws_cloudfront_distribution.main.arn
-      },
       # Phase B step 8: run the database migrations as a one-off ECS task
-      # (deploy.yml), wait for it, and print its log.
+      # (deploy-backend.yml), wait for it, and print its log.
       {
         Sid      = "MigrationRunTask" # only the backend task definition
         Effect   = "Allow"
@@ -202,7 +205,7 @@ resource "aws_iam_role_policy" "github" {
         # (checked with aws iam simulate-custom-policy; ":log-stream:*" was denied).
         Resource = "${aws_cloudwatch_log_group.backend.arn}:*"
       },
-      # Phase B step 9: database snapshots before migrations (deploy.yml)
+      # Phase B step 9: database snapshots before migrations (deploy-backend.yml)
       # and the monthly restore drill (restore-drill.yml). Production can be
       # snapshotted and read, never deleted or overwritten: delete/restore
       # only work on the drill copy and on smallproject-* snapshots.
@@ -220,7 +223,8 @@ resource "aws_iam_role_policy" "github" {
         Effect = "Allow"
         Action = ["rds:DescribeDBSnapshots", "rds:DescribeDBInstances"]
         Resource = [
-          "arn:aws:rds:${local.region}:${local.account}:db:${local.name}*",
+          "arn:aws:rds:${local.region}:${local.account}:db:${local.name}",       # exact names: dev's
+          "arn:aws:rds:${local.region}:${local.account}:db:${local.name}-drill", # role can't read beta's
           "arn:aws:rds:${local.region}:${local.account}:snapshot:${local.name}-*",
         ]
       },
