@@ -10,8 +10,8 @@
 #
 # Usage: GitHub Actions runs Terraform (.github/workflows/terraform.yml);
 # deploy-frontend.yml calls it with stack=frontend: a plan on every PR that
-# touches infra/frontend/ or frontend/, apply to dev on merge to main, apply
-# to beta from release.yml. The backend must be applied first.
+# touches infra/frontend/ or frontend/, apply to dev on merge to code, apply
+# to qa, then beta, from release.yml. The backend must be applied first.
 
 terraform {
   required_version = ">= 1.10"

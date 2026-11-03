@@ -1,10 +1,10 @@
-# deploy-frontend.yml: ships the website (React build on S3 + CloudFront) to dev or beta.
+# deploy-frontend.yml: ships the website (React build on S3 + CloudFront) to dev, qa or beta.
 #
 # When it runs (changes in frontend/ or infra/frontend/):
 #   pull request         -> Terraform plan only
-#   merge to main        -> dev
-#   release.yml          -> beta (after deploy-backend; waits for your approval)
-#   Run workflow button  -> dev or beta
+#   merge to code        -> dev
+#   release.yml          -> qa, then beta (after deploy-backend; beta waits for your approval)
+#   Run workflow button  -> dev, qa or beta
 #
 # Job "infra" first applies the website's AWS stack (terraform.yml, stack
 # frontend: S3 bucket + CloudFront). Job "deploy" then signs in with the
@@ -20,16 +20,16 @@ name: deploy-frontend
 
 on:
   pull_request:
-    branches: [main]
+    branches: [code]
     paths: [frontend/**, infra/frontend/**, .github/workflows/deploy-frontend.yml, .github/workflows/terraform.yml]
   push:
-    branches: [main]
+    branches: [code]
     paths: [frontend/**, infra/frontend/**, .github/workflows/deploy-frontend.yml, .github/workflows/terraform.yml]
   workflow_dispatch:
     inputs:
       env:
         type: choice
-        options: [dev, beta]
+        options: [dev, qa, beta]
   workflow_call:
     inputs:
       env:
