@@ -1,17 +1,17 @@
-# deploy-backend.yml: ships the backend (FastAPI on ECS) to dev, qa or beta.
+# deploy-backend.yml: ships the backend (FastAPI on ECS) to alpha or beta.
 #
 # When it runs (changes in backend/ or infra/backend/):
-#   pull request                             -> Terraform plan only
-#   merge to code (the dev branch)           -> dev
-#   release.yml                              -> qa, then beta (beta waits for your approval)
-#   Run workflow button                      -> dev, qa or beta; with "sha" set,
+#   pull request (into code or alpha)        -> Terraform plan for alpha only
+#   merge to alpha                           -> alpha
+#   release.yml                              -> beta (waits for your approval)
+#   Run workflow button                      -> alpha or beta; with "sha" set,
 #                                               it is the undo button (below)
 #
 # Job "infra" first applies the backend's AWS stack (terraform.yml, stack
 # backend), then job "deploy" ships the code:
 #   1. signs in to AWS through OIDC with the environment's deploy role
 #      (vars.AWS_ROLE_ARN). The role trusts only jobs in that GitHub
-#      environment, so a dev job can't touch beta and the other way round.
+#      environment, so an alpha job can't touch beta and the other way round.
 #   2. builds the backend image and pushes it to ECR as :latest plus the
 #      commit SHA, so each version is traceable and can be put back
 #   3. if migrations changed: snapshots the database first (keeps the
@@ -38,16 +38,16 @@ name: deploy-backend
 
 on:
   pull_request:
-    branches: [code]
+    branches: [code, alpha]
     paths: [backend/**, infra/backend/**, .github/workflows/deploy-backend.yml, .github/workflows/terraform.yml]
   push:
-    branches: [code]
+    branches: [alpha]
     paths: [backend/**, infra/backend/**, .github/workflows/deploy-backend.yml, .github/workflows/terraform.yml]
   workflow_dispatch:
     inputs:
       env:
         type: choice
-        options: [dev, qa, beta]
+        options: [alpha, beta]
       sha:
         description: "Undo: full commit SHA of an earlier version to put back (empty = build this branch)"
         required: false
@@ -70,7 +70,7 @@ permissions:
 # Never run two deploys of one environment at once; a newer one waits.
 # Pull requests (plan only) don't queue behind deploys.
 concurrency:
-  group: deploy-backend-${{ inputs.env || 'dev' }}-${{ github.event_name == 'pull_request' && github.run_id || 'deploy' }}
+  group: deploy-backend-${{ inputs.env || 'alpha' }}-${{ github.event_name == 'pull_request' && github.run_id || 'deploy' }}
   cancel-in-progress: false
 
 jobs:
@@ -82,7 +82,7 @@ jobs:
     uses: ./.github/workflows/terraform.yml
     with:
       stack: backend
-      env: ${{ inputs.env || 'dev' }}
+      env: ${{ inputs.env || 'alpha' }}
       action: ${{ github.event_name == 'pull_request' && 'plan' || 'apply' }}
       ref: ${{ inputs.ref }}
     secrets:
@@ -93,7 +93,7 @@ jobs:
     # After a successful apply, or with infra skipped for an undo.
     if: ${{ !cancelled() && github.event_name != 'pull_request' && needs.infra.result != 'failure' }}
     runs-on: ubuntu-24.04-arm # ARM, to match the Fargate ARM64 tasks
-    environment: ${{ inputs.env || 'dev' }}
+    environment: ${{ inputs.env || 'alpha' }}
     permissions:
       contents: read
       id-token: write # lets the job request the OIDC token for AWS
@@ -110,11 +110,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.ref }}
-          fetch-depth: 0 # full history, to compare with the previous code commit
+          fetch-depth: 0 # full history, to compare with the previous alpha commit
           persist-credentials: false # don't leave the token in .git/config
 
       # New or changed migrations? Then snapshot the database first. Only a
-      # merge to code knows the previous commit; any other run (release,
+      # merge to alpha knows the previous commit; any other run (release,
       # button) can't tell, so it snapshots to be safe.
       - name: Check for migration changes
         id: changes
