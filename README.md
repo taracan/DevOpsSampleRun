@@ -97,7 +97,7 @@ from a laptop.
 |---|---|
 | Change AWS (Terraform) | Two stacks, `infra/backend/` and `infra/frontend/`, each with its own state. A PR touching one shows its plan; merging into `alpha` applies it to alpha, then deploys that part (`deploy-backend.yml` / `deploy-frontend.yml` call `terraform.yml`) |
 | Integrate | Merge feature PRs into `code`: checks only, no deploy |
-| Ship to alpha | Actions → **promote** → Run workflow: ticket `SP-7`. It opens a PR copying that ticket's commits from `code` into `alpha`; fix any conflict there, let CI pass, merge: alpha deploys the part that changed |
+| Ship to alpha | Actions → **promote** → Run workflow: tickets `SP-1,SP-3,SP-5`. It opens one PR copying those tickets' commits from `code` into `alpha` (on a conflict it prints the commands to fix it by hand); let CI pass, then **Rebase and merge**: alpha deploys the part that changed |
 | Ship to beta | Actions → **release** → Run workflow: version `1.3`. It cuts `release/1.3` from `alpha` as tested and deploys it to beta after your approval |
 | Mark a release | When beta looks good, publish tag `v1.3` on `release/1.3` from the Releases page |
 | Turn an environment off | Actions → **terraform** → stack `frontend`, then stack `backend`; env, `destroy`, type the env name. A database snapshot is kept |

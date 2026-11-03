@@ -8,9 +8,12 @@
 #
 # What it sets:
 #   1. Default branch "code" (integration, no deploys; alpha and beta
-#      get it through PRs and releases; main is kept for production later). Merge buttons: squash merge only, the squash
-#      commit uses the PR title and body, and the branch is deleted after merge.
-#   2. Ruleset "main" on the default branch (code), alpha and main: changes only through a PR
+#      get it through PRs and releases; main is kept for production later).
+#      Merge buttons: squash and rebase (the rulesets below decide which a
+#      branch allows); a squash commit uses the PR title and body; the
+#      branch is deleted after merge.
+#   2. Rulesets "main" (code and main, squash merge) and "alpha" (rebase
+#      merge, so each ticket's commits keep their own titles): changes only through a PR
 #      (0 approvals: a solo owner can't approve their own PR), the required
 #      checks below must pass on an up-to-date branch, linear history, no
 #      force push, no deletion. No one can bypass it, admins included.
@@ -84,20 +87,25 @@ jq -n '{
   default_branch: "code",
   allow_squash_merge: true,
   allow_merge_commit: false,
-  allow_rebase_merge: false,
+  allow_rebase_merge: true,
   delete_branch_on_merge: true,
   squash_merge_commit_title: "PR_TITLE",
   squash_merge_commit_message: "PR_BODY"
 }' | api PATCH "repos/$REPO"
 
-# 2. Ruleset "main"
-jq -n --argjson app "$GITHUB_ACTIONS_APP_ID" \
-  --argjson checks "$(printf '%s\n' "${REQUIRED_CHECKS[@]}" | jq -R . | jq -s .)" '{
-  name: "main",
+# 2. Rulesets "main" and "alpha": the same rules, different merge button.
+# Usage: branch_ruleset <name> <merge method> <branch pattern>...
+branch_ruleset() {
+  local name=$1 method=$2; shift 2
+  jq -n --arg name "$name" --arg method "$method" \
+    --argjson include "$(printf '%s\n' "$@" | jq -R . | jq -s .)" \
+    --argjson app "$GITHUB_ACTIONS_APP_ID" \
+    --argjson checks "$(printf '%s\n' "${REQUIRED_CHECKS[@]}" | jq -R . | jq -s .)" '{
+  name: $name,
   target: "branch",
   enforcement: "active",
   bypass_actors: [],
-  conditions: { ref_name: { include: ["~DEFAULT_BRANCH", "refs/heads/alpha", "refs/heads/main"], exclude: [] } },
+  conditions: { ref_name: { include: $include, exclude: [] } },
   rules: [
     { type: "deletion" },
     { type: "non_fast_forward" },
@@ -108,7 +116,7 @@ jq -n --argjson app "$GITHUB_ACTIONS_APP_ID" \
         require_code_owner_review: false,
         require_last_push_approval: false,
         required_review_thread_resolution: false,
-        allowed_merge_methods: ["squash"]
+        allowed_merge_methods: [$method]
     } },
     { type: "required_status_checks", parameters: {
         strict_required_status_checks_policy: true,
@@ -116,6 +124,12 @@ jq -n --argjson app "$GITHUB_ACTIONS_APP_ID" \
     } }
   ]
 }' | put_ruleset
+}
+# Feature PRs into code: squash, one commit per PR, titled with its ticket.
+branch_ruleset main squash "~DEFAULT_BRANCH" refs/heads/main
+# Promote PRs into alpha: rebase, so each ticket's commits land unchanged
+# and promote.yml can tell which tickets alpha already has.
+branch_ruleset alpha rebase refs/heads/alpha
 
 # 3. Remove the classic branch protection (only if it is still there)
 if gh api "repos/$REPO/branches/main/protection" > /dev/null 2>&1; then
