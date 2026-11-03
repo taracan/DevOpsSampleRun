@@ -1,10 +1,10 @@
-# deploy-backend.yml: ships the backend (FastAPI on ECS) to dev or beta.
+# deploy-backend.yml: ships the backend (FastAPI on ECS) to dev, qa or beta.
 #
 # When it runs (changes in backend/ or infra/backend/):
 #   pull request                             -> Terraform plan only
-#   merge to main                            -> dev
-#   release.yml                              -> beta (waits for your approval)
-#   Run workflow button                      -> dev or beta; with "sha" set,
+#   merge to code (the dev branch)           -> dev
+#   release.yml                              -> qa, then beta (beta waits for your approval)
+#   Run workflow button                      -> dev, qa or beta; with "sha" set,
 #                                               it is the undo button (below)
 #
 # Job "infra" first applies the backend's AWS stack (terraform.yml, stack
@@ -38,16 +38,16 @@ name: deploy-backend
 
 on:
   pull_request:
-    branches: [main]
+    branches: [code]
     paths: [backend/**, infra/backend/**, .github/workflows/deploy-backend.yml, .github/workflows/terraform.yml]
   push:
-    branches: [main]
+    branches: [code]
     paths: [backend/**, infra/backend/**, .github/workflows/deploy-backend.yml, .github/workflows/terraform.yml]
   workflow_dispatch:
     inputs:
       env:
         type: choice
-        options: [dev, beta]
+        options: [dev, qa, beta]
       sha:
         description: "Undo: full commit SHA of an earlier version to put back (empty = build this branch)"
         required: false
@@ -110,11 +110,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.ref }}
-          fetch-depth: 0 # full history, to compare with the previous main
+          fetch-depth: 0 # full history, to compare with the previous code commit
           persist-credentials: false # don't leave the token in .git/config
 
       # New or changed migrations? Then snapshot the database first. Only a
-      # merge to main knows the previous commit; any other run (release,
+      # merge to code knows the previous commit; any other run (release,
       # button) can't tell, so it snapshots to be safe.
       - name: Check for migration changes
         id: changes

@@ -6,13 +6,13 @@
 # vulnerability, and it's required, so the PR can't merge. It also comments
 # a summary on the PR when it finds something.
 #
-# Only runs on PRs: it reviews a change, and main only changes through PRs.
+# Only runs on PRs: it reviews a change, and code only changes through PRs.
 
 name: dependency-review
 
 on:
   pull_request:
-    branches: [main]
+    branches: [code]
 
 permissions:
   contents: read

@@ -116,11 +116,11 @@ locals {
   # See: gh api repos/taracan/DevOpsSampleRun/actions/oidc/customization/sub
   github_sub = "repo:taracan@47918634/DevOpsSampleRun@1410627250"
 
-  # Jobs that run in this GitHub environment (dev or beta). Dev also keeps
-  # trusting main without an environment, for restore-drill.yml.
+  # Jobs that run in this GitHub environment (dev, qa or beta). Dev also trusts
+  # the code branch (the default) without an environment, for restore-drill.yml.
   github_subjects = concat(
     ["${local.github_sub}:environment:${var.env}"],
-    var.env == "dev" ? ["${local.github_sub}:ref:refs/heads/main"] : [],
+    var.env == "dev" ? ["${local.github_sub}:ref:refs/heads/code"] : [],
   )
 }
 

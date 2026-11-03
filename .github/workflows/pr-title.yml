@@ -1,7 +1,7 @@
 # pr-title.yml: every PR title must start with its Jira ticket number.
 #
 # Example: "SI-12 Supplier sync" (ticket number, space, feature name).
-# The title becomes the squash commit's message on main, and release.yml
+# The title becomes the squash commit's message on code, and release.yml
 # finds a ticket's change by that prefix, so this is what makes
 # feature-by-feature releases possible. Required check (apply-settings.sh).
 #
@@ -12,7 +12,7 @@ name: pr-title
 
 on:
   pull_request:
-    branches: [main]
+    branches: [code]
     types: [opened, edited, synchronize, reopened]
 
 permissions: {}

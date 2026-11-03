@@ -32,6 +32,7 @@ IAM → Roles → **Create role** → **Custom trust policy**, paste:
           "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
           "token.actions.githubusercontent.com:sub": [
             "repo:taracan@47918634/DevOpsSampleRun@1410627250:environment:dev",
+            "repo:taracan@47918634/DevOpsSampleRun@1410627250:environment:qa",
             "repo:taracan@47918634/DevOpsSampleRun@1410627250:environment:beta"
           ]
         }
@@ -42,9 +43,9 @@ IAM → Roles → **Create role** → **Custom trust policy**, paste:
 ```
 
 Next → attach **AdministratorAccess** → name it `smallproject-terraform` →
-Create. Only jobs in this repo's `dev` or `beta` GitHub environment can use it.
+Create. Only jobs in this repo's `dev`, `qa` or `beta` GitHub environment can use it.
 
-Already made it trusting only `dev`? IAM → Roles → `smallproject-terraform`
+Already made it without `qa` (or only `dev`)? IAM → Roles → `smallproject-terraform`
 → **Trust relationships** → **Edit trust policy**, paste the text above,
 **Update policy**.
 
@@ -63,7 +64,7 @@ Then in the repo: Settings → Secrets and variables → Actions:
 - **Secrets** → New repository secret `ADMIN_TOKEN` = the token
 - **Variables** → New repository variable `TF_ROLE_ARN` =
   `arn:aws:iam::631571737116:role/smallproject-terraform` (a repository
-  variable serves dev and beta; one already set on the `dev` environment
+  variable serves dev, qa and beta; one already set on the `dev` environment
   is fine to keep, it has the same value)
 
 ## 3. GitHub Actions: first runs

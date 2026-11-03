@@ -18,7 +18,7 @@
 # (instead of using an old one) means the copy has the CURRENT database
 # password, which is the one the ECS task already reads.
 #
-# Sign-in: the dev GitHub OIDC role (it trusts main for this workflow).
+# Sign-in: the dev GitHub OIDC role (it trusts the code branch for this workflow).
 # Runtime: about 20-30 minutes, mostly AWS creating and deleting the copy.
 
 name: restore-drill

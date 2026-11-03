@@ -8,10 +8,10 @@ name: build-frontend
 
 on:
   pull_request:
-    branches: [main]
+    branches: [code]
     paths: [frontend/**, .github/workflows/build-frontend.yml]
   push:
-    branches: [main]
+    branches: [code]
     paths: [frontend/**, .github/workflows/build-frontend.yml]
 
 permissions:

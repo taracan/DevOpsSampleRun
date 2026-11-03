@@ -1,4 +1,4 @@
-# terraform.yml: builds, updates and tears down one AWS stack, for dev or beta.
+# terraform.yml: builds, updates and tears down one AWS stack, for dev, qa or beta.
 #
 # Two stacks, each with its own state:
 #   backend   infra/backend/   network, ECS, load balancer, database, jobs
@@ -7,9 +7,9 @@
 # Terraform is never run from a laptop. This workflow runs it:
 #   deploy-backend.yml / deploy-frontend.yml call it first:
 #     pull request  -> plan for dev (a preview, changes nothing)
-#     merge to main -> apply to dev
-#     release.yml   -> apply to beta (waits for your approval)
-#   Run workflow button -> plan, apply or destroy one stack, dev or beta.
+#     merge to code -> apply to dev
+#     release.yml   -> apply to qa, then beta (beta waits for your approval)
+#   Run workflow button -> plan, apply or destroy one stack, dev, qa or beta.
 #     Destroy the frontend before the backend (it uses the backend's
 #     load balancer); build the backend first.
 #
@@ -35,7 +35,7 @@ on:
         options: [backend, frontend]
       env:
         type: choice
-        options: [dev, beta]
+        options: [dev, qa, beta]
       action:
         type: choice
         options: [plan, apply, destroy]

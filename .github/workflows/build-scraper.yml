@@ -8,10 +8,10 @@ name: build-scraper
 
 on:
   pull_request:
-    branches: [main]
+    branches: [code]
     paths: [scraper/**, .github/workflows/build-scraper.yml]
   push:
-    branches: [main]
+    branches: [code]
     paths: [scraper/**, .github/workflows/build-scraper.yml]
 
 permissions:
