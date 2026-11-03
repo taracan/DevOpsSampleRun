@@ -29,8 +29,8 @@ SmallProject/
 │           ├── router.py
 │           └── endpoints/      # auth.py -> POST /auth/register
 ├── scraper/, ai/                # placeholders: Dockerfile + main.py, image build only
-├── infra/backend/              # Terraform for the backend (network, ECS, DB, jobs); envs/dev, envs/qa, envs/beta
-├── infra/frontend/             # Terraform for the website (S3 + CloudFront); envs/dev, envs/qa, envs/beta
+├── infra/backend/              # Terraform for the backend (network, ECS, DB, jobs); envs/alpha, envs/beta
+├── infra/frontend/             # Terraform for the website (S3 + CloudFront); envs/alpha, envs/beta
 ├── .github/workflows/          # CI, deploy-backend/-frontend (each runs its own terraform), build-*, release
 └── frontend/
     ├── package.json, vite.config.js (+ Vitest settings), eslint.config.js, index.html, .env.example
@@ -85,25 +85,27 @@ npm run lint && npm test
 ```
 
 ## Environments, releases and undo
-Three copies of the stack run in one AWS account: **dev** (`smallproject-*`),
-**qa** (`smallproject-qa-*`) and **beta** (`smallproject-beta-*`, shown to the
-client), each with its own deploy role that can only touch its own resources.
-Branches: `code` (the default) deploys to dev; `release/*` goes to qa, then
-beta; `main` is locked, kept for production later. Everything runs from GitHub Actions; nothing is run
+Two copies of the stack run in one AWS account: **alpha** (`smallproject-*`,
+where selected changes are tested) and **beta** (`smallproject-beta-*`, shown
+to the client), each with its own deploy role that can only touch its own
+resources. Branches: `code` (the default) is integration and deploys nowhere;
+`alpha` gets selected tickets one PR at a time and deploys to alpha;
+`release/*` copies alpha to beta; `main` is locked, kept for production later. Everything runs from GitHub Actions; nothing is run
 from a laptop.
 
 | What | How |
 |---|---|
-| Change AWS (Terraform) | Two stacks, `infra/backend/` and `infra/frontend/`, each with its own state. A PR touching one shows its plan; merging applies it to dev, then deploys that part (`deploy-backend.yml` / `deploy-frontend.yml` call `terraform.yml`) |
-| Ship to dev | Merge to `code`: `deploy-backend.yml` / `deploy-frontend.yml` run for the part that changed |
-| Ship to beta | Actions → **release** → Run workflow: version `1.3`, tickets `SI-1,SI-2`. It cuts `release/1.3` with only those tickets' changes, runs all CI checks on it, deploys it to qa, and then to beta after your approval (test qa first; reject if it's wrong) |
+| Change AWS (Terraform) | Two stacks, `infra/backend/` and `infra/frontend/`, each with its own state. A PR touching one shows its plan; merging into `alpha` applies it to alpha, then deploys that part (`deploy-backend.yml` / `deploy-frontend.yml` call `terraform.yml`) |
+| Integrate | Merge feature PRs into `code`: checks only, no deploy |
+| Ship to alpha | Actions → **promote** → Run workflow: ticket `SP-7`. It opens a PR copying that ticket's commits from `code` into `alpha`; fix any conflict there, let CI pass, merge: alpha deploys the part that changed |
+| Ship to beta | Actions → **release** → Run workflow: version `1.3`. It cuts `release/1.3` from `alpha` as tested and deploys it to beta after your approval |
 | Mark a release | When beta looks good, publish tag `v1.3` on `release/1.3` from the Releases page |
 | Turn an environment off | Actions → **terraform** → stack `frontend`, then stack `backend`; env, `destroy`, type the env name. A database snapshot is kept |
 | API keys | Secrets Manager console → `<env prefix>/app` (JSON), then add the key to `secrets` in `infra/backend/app.tf` |
 
 Every PR title starts with its Jira ticket number, e.g. `SI-12 Supplier sync`
-(`pr-title.yml`); that is how the release button finds a feature. A feature's
-backend and frontend PRs use the same ticket, so a release takes both halves.
+(`pr-title.yml`); that is how the promote button finds a feature. A feature's
+backend and frontend PRs use the same ticket, so promote takes both halves.
 
 **Undo, from smallest to biggest**
 1. Automatic: if new backend tasks fail their health checks, ECS rolls back.

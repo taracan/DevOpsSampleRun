@@ -1,4 +1,4 @@
-# state.tfbackend (dev): where dev's backend Terraform state is stored.
+# state.tfbackend (alpha): where alpha's backend Terraform state is stored.
 # Same bucket and key as before environments existed, so no state moves.
 bucket       = "smallproject-tfstate-631571737116"
 key          = "smallproject/terraform.tfstate"

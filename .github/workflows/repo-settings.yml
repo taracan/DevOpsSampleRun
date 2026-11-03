@@ -2,7 +2,7 @@
 #
 # Actions -> repo-settings -> Run workflow. Runs
 # .github/settings/apply-settings.sh (merge buttons, rulesets, security
-# features, the dev and beta environments). Safe to run any number of
+# features, the alpha and beta environments). Safe to run any number of
 # times. Uses the ADMIN_TOKEN secret: the built-in token can't change
 # repository settings.
 

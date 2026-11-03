@@ -1,7 +1,7 @@
-# state.tfbackend (qa): where qa's frontend Terraform state is stored.
+# state.tfbackend (alpha): where alpha's frontend Terraform state is stored.
 # Same bucket as the backend stack, its own file.
 bucket       = "smallproject-tfstate-631571737116"
-key          = "smallproject-qa/frontend.tfstate"
+key          = "smallproject/frontend.tfstate"
 region       = "us-east-1"
 encrypt      = true
 use_lockfile = true

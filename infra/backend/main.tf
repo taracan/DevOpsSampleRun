@@ -22,8 +22,8 @@
 #
 # Usage: GitHub Actions runs Terraform (.github/workflows/terraform.yml):
 # deploy-backend.yml calls it with stack=backend: a plan on every PR that
-# touches infra/backend/ or backend/, apply to dev on merge to code, apply
-# to qa, then beta, from release.yml; plus a Run workflow button for apply/destroy.
+# touches infra/backend/ or backend/, apply to alpha on merge to alpha, apply
+# to beta from release.yml; plus a Run workflow button for apply/destroy.
 
 terraform {
   # 1.10+ supports locking the state with a lock file in S3 (use_lockfile).
@@ -56,7 +56,7 @@ provider "aws" {
 }
 
 locals {
-  name   = var.name # prefix for resource names: smallproject (dev), smallproject-qa, smallproject-beta
+  name   = var.name # prefix for resource names: smallproject (alpha), smallproject-beta
   region = "us-east-1"
 
   # Two availability zones (separate data centers): the load balancer

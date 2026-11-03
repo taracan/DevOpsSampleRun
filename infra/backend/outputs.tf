@@ -82,7 +82,7 @@ output "report_state_machine_arn" {
   value = aws_sfn_state_machine.report.arn
 }
 
-# terraform.yml copies these into the GitHub environment (dev or beta) as
+# terraform.yml copies these into the GitHub environment (alpha or beta) as
 # variables, which the deploy workflows read as vars.<NAME>. Nothing is
 # copied by hand, and a rebuilt environment stays in sync. The frontend
 # stack adds its own (WEB_BUCKET, SITE_URL, ...).

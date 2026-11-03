@@ -7,10 +7,10 @@
 # at any time. Running it twice gives the same result (idempotent).
 #
 # What it sets:
-#   1. Default branch "code" (dev deploys from it; main is kept for
-#      production later). Merge buttons: squash merge only, the squash
+#   1. Default branch "code" (integration, no deploys; alpha and beta
+#      get it through PRs and releases; main is kept for production later). Merge buttons: squash merge only, the squash
 #      commit uses the PR title and body, and the branch is deleted after merge.
-#   2. Ruleset "main" on the default branch (code) and on main: changes only through a PR
+#   2. Ruleset "main" on the default branch (code), alpha and main: changes only through a PR
 #      (0 approvals: a solo owner can't approve their own PR), the required
 #      checks below must pass on an up-to-date branch, linear history, no
 #      force push, no deletion. No one can bypass it, admins included.
@@ -24,8 +24,8 @@
 #   5. Security features: secret scanning, push protection (a push that
 #      contains a secret, such as an AWS key, is rejected), Dependabot
 #      alerts and Dependabot security-update PRs.
-#   6. Deployment environments: dev and qa (no gate), and beta (waits for
-#      the owner's approval before any job that uses it starts).
+#   6. Deployment environments: alpha (no gate) and beta (waits for the
+#      owner's approval before any job that uses it starts).
 #   7. Ruleset "release-branches": release/* branches (made by release.yml)
 #      can't be force-pushed or deleted.
 #
@@ -97,7 +97,7 @@ jq -n --argjson app "$GITHUB_ACTIONS_APP_ID" \
   target: "branch",
   enforcement: "active",
   bypass_actors: [],
-  conditions: { ref_name: { include: ["~DEFAULT_BRANCH", "refs/heads/main"], exclude: [] } },
+  conditions: { ref_name: { include: ["~DEFAULT_BRANCH", "refs/heads/alpha", "refs/heads/main"], exclude: [] } },
   rules: [
     { type: "deletion" },
     { type: "non_fast_forward" },
@@ -166,8 +166,7 @@ else
 fi
 
 # 6. Deployment environments. Their variables are written by terraform.yml.
-jq -n '{}' | api PUT "repos/$REPO/environments/dev"
-jq -n '{}' | api PUT "repos/$REPO/environments/qa"
+jq -n '{}' | api PUT "repos/$REPO/environments/alpha"
 
 jq -n --argjson owner "$OWNER_USER_ID" '{
   reviewers: [ { type: "User", id: $owner } ],

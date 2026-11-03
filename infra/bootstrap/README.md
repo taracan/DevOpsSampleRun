@@ -31,8 +31,7 @@ IAM → Roles → **Create role** → **Custom trust policy**, paste:
         "StringEquals": {
           "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
           "token.actions.githubusercontent.com:sub": [
-            "repo:taracan@47918634/DevOpsSampleRun@1410627250:environment:dev",
-            "repo:taracan@47918634/DevOpsSampleRun@1410627250:environment:qa",
+            "repo:taracan@47918634/DevOpsSampleRun@1410627250:environment:alpha",
             "repo:taracan@47918634/DevOpsSampleRun@1410627250:environment:beta"
           ]
         }
@@ -43,9 +42,9 @@ IAM → Roles → **Create role** → **Custom trust policy**, paste:
 ```
 
 Next → attach **AdministratorAccess** → name it `smallproject-terraform` →
-Create. Only jobs in this repo's `dev`, `qa` or `beta` GitHub environment can use it.
+Create. Only jobs in this repo's `alpha` or `beta` GitHub environment can use it.
 
-Already made it without `qa` (or only `dev`)? IAM → Roles → `smallproject-terraform`
+Already made it with `dev` (or `qa`) instead of `alpha`? IAM → Roles → `smallproject-terraform`
 → **Trust relationships** → **Edit trust policy**, paste the text above,
 **Update policy**.
 
@@ -64,19 +63,19 @@ Then in the repo: Settings → Secrets and variables → Actions:
 - **Secrets** → New repository secret `ADMIN_TOKEN` = the token
 - **Variables** → New repository variable `TF_ROLE_ARN` =
   `arn:aws:iam::631571737116:role/smallproject-terraform` (a repository
-  variable serves dev, qa and beta; one already set on the `dev` environment
+  variable serves alpha and beta; one already set on an environment
   is fine to keep, it has the same value)
 
 ## 3. GitHub Actions: first runs
 
-1. Actions → **repo-settings** → Run workflow. Creates the `dev` and `beta`
+1. Actions → **repo-settings** → Run workflow. Creates the `alpha` and `beta`
    environments (beta waits for your approval), the release-branch rule and
    the `pr-title` required check.
 2. The merge that splits Terraform into `infra/backend/` and
-   `infra/frontend/` runs **deploy-backend** and **deploy-frontend** for dev.
-   Each applies its own stack first, which fills dev's variables, then
-   deploys. The frontend stack takes over dev's existing bucket and
-   CloudFront distribution (`moved.tf` in both stacks); nothing is rebuilt.
+   `infra/frontend/` ran **deploy-backend** and **deploy-frontend** for dev (now alpha).
+   Each applies its own stack first, which fills the environment's variables,
+   then deploys. The frontend stack took over the existing bucket and
+   CloudFront distribution (`moved.tf`, since deleted); nothing was rebuilt.
 3. AWS console → CloudFront → **Origin access** → select the old
    `smallproject-web` (the distribution now uses `smallproject-web-oac`) →
    **Delete**. The console refuses if it's still in use.

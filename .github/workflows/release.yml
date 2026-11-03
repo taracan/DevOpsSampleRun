@@ -1,29 +1,22 @@
-# release.yml: the "release to beta" button. Picks features by ticket number.
+# release.yml: the "release to beta" button. Ships alpha, as tested, to beta.
 #
-# Actions -> release -> Run workflow, with a version (1.3) and tickets
-# (SI-1,SI-2,SI-3). Then:
-#   1. cut       makes branch release/1.3 from the latest release tag (v*)
-#                and cherry-picks, oldest first, the commits on code whose
-#                title starts with those tickets (squash merges are titled
-#                with the PR title, which pr-title.yml makes start with the
-#                ticket). Commits already in that release are skipped.
-#                The very first release (no v* tag yet) takes all of code.
-#                Stops with an error on a conflict or an unknown ticket.
-#   2. test      all of ci.yml's checks (lint, tests, build) on the release
-#                branch: exactly the picked tickets together. Red stops here.
-#   3. qa-*      deploy-backend.yml, then deploy-frontend.yml, ship the
-#                release to qa (no approval). Click-test it there.
-#   4. backend,  the same release to beta, only after qa succeeded. Each
-#      frontend  Terraform and deploy job waits for your approval (GitHub
-#                environment "beta"): approve when qa looks good, reject if not.
-# Steps 3 and 4 run only for the parts this release changes compared with
+# Tickets reach alpha one PR at a time (promote.yml) and are tested there.
+# Actions -> release -> Run workflow, with a version (1.3). Then:
+#   1. cut       makes branch release/1.3 from alpha exactly as it is now
+#                (nothing is picked or merged here, so nothing can conflict)
+#   2. backend   deploy-backend.yml applies infra/backend/ to beta, then
+#                ships the backend
+#   3. frontend  deploy-frontend.yml applies infra/frontend/ to beta, then
+#                ships the website (after the backend: it uses the backend's
+#                load balancer)
+# Steps 2 and 3 run only for the parts this release changes compared with
 # the previous tag (folders below, plus that part's workflows). A change to
 # infra/backend/ also re-runs the frontend, which reads the load balancer's
-# address. The first release (no tag yet) runs both. The frontend jobs run
-# after the backend ones: the website uses the backend's load balancer.
+# address. The first release (no tag yet) runs both.
+# Each Terraform and deploy job waits for your approval (GitHub environment "beta").
 #
 # When beta looks good, publish tag v1.3 on the release branch from the
-# Releases page: the next release starts from it.
+# Releases page: the next release compares with it.
 #
 # The branch is pushed with ADMIN_TOKEN, because the built-in token may
 # not push commits that change files in .github/workflows/.
@@ -35,9 +28,6 @@ on:
     inputs:
       version:
         description: "Version, e.g. 1.3"
-        required: true
-      tickets:
-        description: "Tickets to release, e.g. SI-1,SI-2,SI-3"
         required: true
 
 permissions:
@@ -57,14 +47,13 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: code
+          ref: alpha
           fetch-depth: 0 # all history and tags
           token: ${{ secrets.ADMIN_TOKEN }} # used for the push below
 
       - id: cut
         env:
           VERSION: ${{ inputs.version }}
-          TICKETS: ${{ inputs.tickets }}
         run: |
           set -euo pipefail
           [[ "$VERSION" =~ ^[0-9]+(\.[0-9]+)*$ ]] || { echo "::error::Version must look like 1.3"; exit 1; }
@@ -72,40 +61,12 @@ jobs:
           if git ls-remote --exit-code --heads origin "$branch" > /dev/null; then
             echo "::error::$branch already exists; pick a new version."; exit 1
           fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          base=$(git tag -l 'v*' --sort=-v:refname | head -1)
-          if [ -z "$base" ]; then
-            echo "::notice::No v* tag yet: the first release takes all of code."
-            git switch -c "$branch" origin/code
-          else
-            echo "Starting from $base"
-            git switch -c "$branch" "$base"
-            for t in $(echo "$TICKETS" | tr ',' ' '); do
-              [[ "$t" =~ ^[A-Z][A-Z0-9]+-[0-9]+$ ]] || { echo "::error::Not a ticket number: $t"; exit 1; }
-              # Commits on code, not yet (patch-equivalent) in this release, titled "<ticket> ...".
-              shas=$(git log --reverse --cherry-pick --right-only --format='%H %s' "$base...origin/code" |
-                awk -v t="$t" '$2 == t {print $1}')
-              if [ -z "$shas" ]; then
-                git log --format=%s origin/code | awk -v t="$t" '$1 == t {f=1} END {exit !f}' ||
-                  { echo "::error::No commit on code is titled $t"; exit 1; }
-                echo "::notice::$t is already in $base: skipped"
-                continue
-              fi
-              echo "$t: $shas"
-              echo "$shas" >> picks
-            done
-            touch picks
-            # Keep code's order across all tickets.
-            for sha in $(git log --reverse --format=%H "$base...origin/code" | grep -F -x -f picks || true); do
-              git cherry-pick -x "$sha" || { git cherry-pick --abort; echo "::error::Conflict cherry-picking $sha; pick it by hand on a branch."; exit 1; }
-            done
-          fi
           git push origin "HEAD:refs/heads/$branch"
           echo "branch=$branch" >> "$GITHUB_OUTPUT"
 
-          # Which parts does this release change? (true = deploy it)
+          # Which parts does this release change since the last tag? (true = deploy it)
+          base=$(git tag -l 'v*' --sort=-v:refname | head -1)
+          echo "Comparing with ${base:-nothing (first release)}"
           changed() { [ -z "$base" ] || ! git diff --quiet "$base" HEAD -- "$@"; }
           backend=false frontend=false
           changed backend infra/backend .github/workflows/deploy-backend.yml .github/workflows/terraform.yml && backend=true
@@ -115,43 +76,9 @@ jobs:
           echo "backend=$backend" >> "$GITHUB_OUTPUT"
           echo "frontend=$frontend" >> "$GITHUB_OUTPUT"
 
-  test:
-    needs: cut
-    uses: ./.github/workflows/ci.yml
-    with:
-      ref: ${{ needs.cut.outputs.branch }}
-
-  qa-backend:
-    needs: [cut, test]
-    if: needs.cut.outputs.backend == 'true'
-    permissions:
-      contents: read
-      id-token: write
-    uses: ./.github/workflows/deploy-backend.yml
-    with:
-      env: qa
-      ref: ${{ needs.cut.outputs.branch }}
-    secrets:
-      ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}
-
-  qa-frontend:
-    needs: [cut, test, qa-backend]
-    # Also when the backend was skipped, but not when it failed.
-    if: ${{ !cancelled() && needs.test.result == 'success' && needs.cut.outputs.frontend == 'true' && needs.qa-backend.result != 'failure' }}
-    permissions:
-      contents: read
-      id-token: write
-    uses: ./.github/workflows/deploy-frontend.yml
-    with:
-      env: qa
-      ref: ${{ needs.cut.outputs.branch }}
-    secrets:
-      ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}
-
-  # Beta only after qa: a part that failed on qa never reaches beta.
   backend:
-    needs: [cut, qa-backend, qa-frontend]
-    if: ${{ !cancelled() && needs.qa-backend.result == 'success' && needs.qa-frontend.result != 'failure' }}
+    needs: cut
+    if: needs.cut.outputs.backend == 'true'
     permissions:
       contents: read
       id-token: write
@@ -163,8 +90,9 @@ jobs:
       ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}
 
   frontend:
-    needs: [cut, qa-backend, qa-frontend, backend]
-    if: ${{ !cancelled() && needs.qa-frontend.result == 'success' && needs.qa-backend.result != 'failure' && needs.backend.result != 'failure' }}
+    needs: [cut, backend]
+    # Also when the backend was skipped, but not when it failed.
+    if: ${{ !cancelled() && needs.cut.outputs.frontend == 'true' && needs.backend.result != 'failure' }}
     permissions:
       contents: read
       id-token: write
