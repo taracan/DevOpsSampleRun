@@ -12,7 +12,7 @@ name: pr-title
 
 on:
   pull_request:
-    branches: [code]
+    branches: [code, alpha]
     types: [opened, edited, synchronize, reopened]
 
 permissions: {}

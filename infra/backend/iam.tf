@@ -13,7 +13,7 @@
 #   ecs_task       the code inside the container: write reports to S3
 #   github         GitHub Actions deploy workflows, one role per
 #                  environment, trusted only for that GitHub environment
-#                  (dev also for main, used by restore-drill.yml): push image, run the database migrations
+#                  (alpha also for the code branch, used by restore-drill.yml): push image, run the database migrations
 #                  as a one-off ECS task (Phase B step 8), redeploy ECS;
 #                  snapshot the database and run the restore drill
 #                  (Phase B step 9)
@@ -97,10 +97,10 @@ resource "aws_iam_role_policy" "ecs_task" {
 # OIDC: GitHub gives each workflow run a signed token, and AWS trusts
 # tokens from GitHub's issuer. So no AWS keys are stored in GitHub.
 #
-# The identity provider exists once per AWS account, and dev and beta share
-# the account. It is no longer managed here: destroying dev must not delete
+# The identity provider exists once per AWS account, and alpha and beta share
+# the account. It is no longer managed here: destroying alpha must not delete
 # it, because the Terraform role (made by hand in the IAM console) also
-# signs in through it. `removed` takes it out of dev's state and keeps it.
+# signs in through it. `removed` took it out of the state and keeps it.
 removed {
   from = aws_iam_openid_connect_provider.github
   lifecycle {
@@ -116,11 +116,11 @@ locals {
   # See: gh api repos/taracan/DevOpsSampleRun/actions/oidc/customization/sub
   github_sub = "repo:taracan@47918634/DevOpsSampleRun@1410627250"
 
-  # Jobs that run in this GitHub environment (dev, qa or beta). Dev also trusts
+  # Jobs that run in this GitHub environment (alpha or beta). Alpha also trusts
   # the code branch (the default) without an environment, for restore-drill.yml.
   github_subjects = concat(
     ["${local.github_sub}:environment:${var.env}"],
-    var.env == "dev" ? ["${local.github_sub}:ref:refs/heads/code"] : [],
+    var.env == "alpha" ? ["${local.github_sub}:ref:refs/heads/code"] : [],
   )
 }
 
@@ -223,7 +223,7 @@ resource "aws_iam_role_policy" "github" {
         Effect = "Allow"
         Action = ["rds:DescribeDBSnapshots", "rds:DescribeDBInstances"]
         Resource = [
-          "arn:aws:rds:${local.region}:${local.account}:db:${local.name}",       # exact names: dev's
+          "arn:aws:rds:${local.region}:${local.account}:db:${local.name}",       # exact names: alpha's
           "arn:aws:rds:${local.region}:${local.account}:db:${local.name}-drill", # role can't read beta's
           "arn:aws:rds:${local.region}:${local.account}:snapshot:${local.name}-*",
         ]

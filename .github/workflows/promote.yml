@@ -1,0 +1,95 @@
+# promote.yml: opens one PR that brings the chosen tickets from code into alpha.
+#
+# Actions -> promote -> Run workflow, with tickets (SP-1,SP-3,SP-5, or just
+# one). It makes branch promote/SP-1-SP-3-SP-5 from alpha, cherry-picks every
+# commit on code whose title starts with one of those tickets and isn't in
+# alpha yet (a feature's backend and frontend PRs share the ticket, so both
+# halves come), in code's order, and opens one PR into alpha. Review it
+# there: CI tests the tickets together. Merge it with "Rebase and merge"
+# (the only button alpha allows), so each commit lands with its own ticket
+# title; that deploys alpha (deploy-backend.yml / deploy-frontend.yml).
+#
+# On a conflict it pushes nothing, and prints the git commands to make the
+# same branch on your laptop, fix the conflict, push and open the PR.
+#
+# The branch is pushed and the PR opened with ADMIN_TOKEN: a PR opened with
+# the built-in token would not start the CI checks, and that token may not
+# push commits that change files in .github/workflows/.
+
+name: promote
+
+on:
+  workflow_dispatch:
+    inputs:
+      tickets:
+        description: "Tickets to bring into alpha, e.g. SP-1,SP-3,SP-5"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  promote:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: alpha
+          fetch-depth: 0 # all history, to compare code with alpha
+          token: ${{ secrets.ADMIN_TOKEN }} # used for the push below
+
+      - env:
+          TICKETS: ${{ inputs.tickets }}
+          GH_TOKEN: ${{ secrets.ADMIN_TOKEN }}
+        run: |
+          set -euo pipefail
+          tickets=$(echo "$TICKETS" | tr ',' ' ')
+          for t in $tickets; do
+            [[ "$t" =~ ^[A-Z][A-Z0-9]+-[0-9]+$ ]] || { echo "::error::Not a ticket number: $t"; exit 1; }
+          done
+          branch="promote/$(echo $tickets | tr ' ' '-')"
+          if git ls-remote --exit-code --heads origin "$branch" > /dev/null; then
+            echo "::error::$branch already exists: finish or close its PR first."; exit 1
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # Commits on code, not yet (patch-equivalent) in alpha, titled "<ticket> ...".
+          missing=$(git log --reverse --cherry-pick --right-only --format='%H %s' origin/alpha...origin/code)
+          : > picks
+          for t in $tickets; do
+            shas=$(echo "$missing" | awk -v t="$t" '$2 == t {print $1}')
+            if [ -z "$shas" ]; then
+              git log --format=%s origin/code | awk -v t="$t" '$1 == t {f=1} END {exit !f}' ||
+                { echo "::error::No commit on code is titled $t"; exit 1; }
+              echo "::notice::$t is already in alpha: skipped"
+              continue
+            fi
+            echo "$shas" >> picks
+          done
+          [ -s picks ] || { echo "::notice::Nothing to promote."; exit 0; }
+          # Keep code's order across all tickets.
+          shas=$(echo "$missing" | awk '{print $1}' | grep -F -x -f picks)
+
+          git switch -c "$branch" origin/alpha
+          for sha in $shas; do
+            if ! git cherry-pick -x "$sha"; then
+              git cherry-pick --abort
+              echo "::error::Conflict on $sha. Fix it on your laptop:"
+              echo "  git fetch origin && git switch -c $branch origin/alpha"
+              echo "  git cherry-pick -x $(echo $shas)"
+              echo "  (fix the files, git add them, git cherry-pick --continue)"
+              echo "  git push -u origin $branch, then open a PR into alpha titled \"$(echo $tickets) Promote to alpha\""
+              exit 1
+            fi
+          done
+          git push origin "HEAD:refs/heads/$branch"
+
+          {
+            echo "Brings $(echo $tickets | sed 's/ /, /g') from \`code\` into \`alpha\`."
+            echo "Merge with **Rebase and merge**; that deploys alpha."
+            echo
+            echo "Commits from code, in order:"
+            for sha in $shas; do echo "- $(git log -1 --format='%h %s' "$sha")"; done
+          } > body.md
+          gh pr create --base alpha --head "$branch" --title "$(echo $tickets) Promote to alpha" --body-file body.md

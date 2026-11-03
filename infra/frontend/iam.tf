@@ -2,7 +2,7 @@
 #
 # deploy-frontend.yml signs in with it through GitHub's OIDC token (no AWS
 # keys stored in GitHub). It is trusted only for jobs in this environment's
-# GitHub environment (dev or beta), and may only upload to this
+# GitHub environment (alpha or beta), and may only upload to this
 # environment's web bucket and clear this environment's CloudFront cache.
 # The backend has its own role (infra/backend/iam.tf).
 

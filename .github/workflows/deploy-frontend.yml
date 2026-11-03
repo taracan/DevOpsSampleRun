@@ -1,10 +1,10 @@
-# deploy-frontend.yml: ships the website (React build on S3 + CloudFront) to dev, qa or beta.
+# deploy-frontend.yml: ships the website (React build on S3 + CloudFront) to alpha or beta.
 #
 # When it runs (changes in frontend/ or infra/frontend/):
-#   pull request         -> Terraform plan only
-#   merge to code        -> dev
-#   release.yml          -> qa, then beta (after deploy-backend; beta waits for your approval)
-#   Run workflow button  -> dev, qa or beta
+#   pull request (into code or alpha) -> Terraform plan for alpha only
+#   merge to alpha                    -> alpha
+#   release.yml                       -> beta (after deploy-backend; waits for your approval)
+#   Run workflow button               -> alpha or beta
 #
 # Job "infra" first applies the website's AWS stack (terraform.yml, stack
 # frontend: S3 bucket + CloudFront). Job "deploy" then signs in with the
@@ -20,16 +20,16 @@ name: deploy-frontend
 
 on:
   pull_request:
-    branches: [code]
+    branches: [code, alpha]
     paths: [frontend/**, infra/frontend/**, .github/workflows/deploy-frontend.yml, .github/workflows/terraform.yml]
   push:
-    branches: [code]
+    branches: [alpha]
     paths: [frontend/**, infra/frontend/**, .github/workflows/deploy-frontend.yml, .github/workflows/terraform.yml]
   workflow_dispatch:
     inputs:
       env:
         type: choice
-        options: [dev, qa, beta]
+        options: [alpha, beta]
   workflow_call:
     inputs:
       env:
@@ -48,7 +48,7 @@ permissions:
 
 # Pull requests (plan only) don't queue behind deploys.
 concurrency:
-  group: deploy-frontend-${{ inputs.env || 'dev' }}-${{ github.event_name == 'pull_request' && github.run_id || 'deploy' }}
+  group: deploy-frontend-${{ inputs.env || 'alpha' }}-${{ github.event_name == 'pull_request' && github.run_id || 'deploy' }}
   cancel-in-progress: false
 
 jobs:
@@ -59,7 +59,7 @@ jobs:
     uses: ./.github/workflows/terraform.yml
     with:
       stack: frontend
-      env: ${{ inputs.env || 'dev' }}
+      env: ${{ inputs.env || 'alpha' }}
       action: ${{ github.event_name == 'pull_request' && 'plan' || 'apply' }}
       ref: ${{ inputs.ref }}
     secrets:
@@ -69,7 +69,7 @@ jobs:
     needs: infra
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-24.04-arm
-    environment: ${{ inputs.env || 'dev' }}
+    environment: ${{ inputs.env || 'alpha' }}
     permissions:
       contents: read
       id-token: write # lets the job request the OIDC token for AWS
