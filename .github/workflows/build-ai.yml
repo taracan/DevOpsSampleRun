@@ -8,10 +8,10 @@ name: build-ai
 
 on:
   pull_request:
-    branches: [main]
+    branches: [code]
     paths: [ai/**, .github/workflows/build-ai.yml]
   push:
-    branches: [main]
+    branches: [code]
     paths: [ai/**, .github/workflows/build-ai.yml]
 
 permissions:
